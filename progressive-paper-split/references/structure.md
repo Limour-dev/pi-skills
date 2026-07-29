@@ -150,3 +150,5 @@ Notes:
 - `title` must be a single line (no line breaks) — it is embedded in a markdown table.
 - For non-English papers, `lang` = e.g. `zh`; the Abstract section may be written in the paper's language.
 - If the paper has no DOI (e.g. some Chinese journals), leave `doi:` empty.
+- Field-validated: English and Chinese papers both flow through `build_parent_index.py` correctly
+  (`lang: zh`, a `## 摘要` heading, and Chinese keywords all parse and render in the parent index).
