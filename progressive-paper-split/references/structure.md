@@ -120,8 +120,8 @@ For Chinese papers: keep the same skeleton; section labels may be Chinese, body 
 
 ## _meta.md template (manifest)
 
-The coordinator's `build_parent_index.py` parses the ` ```meta ` fence and the first
-`## Abstract`/`## 摘要` section. Keep that structure exactly.
+The coordinator's `build_parent_index.py` parses the ` ```meta ` fence (including the
+`one_liner` field) and the first `## Abstract`/`## 摘要` section. Keep that structure exactly.
 
 ```markdown
 # _meta — machine-readable manifest (structure parsed by build_parent_index.py)
@@ -136,6 +136,7 @@ year: <YYYY>
 doi: <doi without https>
 authors_short: <FirstAuthor et al., or 中文作者等>
 keywords: kw1; kw2; kw3
+one_liner: <single-line core conclusion, ≤ ~110 chars, with one key number — shown in the parent index table>
 ```
 
 ## Abstract
@@ -148,6 +149,9 @@ keywords: kw1; kw2; kw3
 
 Notes:
 - `title` must be a single line (no line breaks) — it is embedded in a markdown table.
+- `one_liner` must also be a single line (it goes into a table cell). Make it the paper's
+  single most important finding with a key number (e.g. `IMH predicts MACE (HR 3.88); MVO alone does not`).
+  If omitted, the parent index falls back to a truncated Results sentence from the abstract.
 - For non-English papers, `lang` = e.g. `zh`; the Abstract section may be written in the paper's language.
 - If the paper has no DOI (e.g. some Chinese journals), leave `doi:` empty.
 - Field-validated: English and Chinese papers both flow through `build_parent_index.py` correctly

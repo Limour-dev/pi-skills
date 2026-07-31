@@ -81,7 +81,7 @@ skill 目录：{SKILL_DIR}
 2. 完整读取 {PAPER_DIR}/full.md（分页读完），按 SKILL.md 的 Subagent workflow 拆分：
    front-matter / introduction / methods / results（每个结果一个 MD）/ tables / figures /
    discussion / references / back-matter，并写入 {PAPER_DIR}/INDEX.MD（Level 1 入口，链接全部文件）。
-3. 写入 {PAPER_DIR}/_meta.md（manifest，模板见 references/structure.md；摘要 ≤ 300 词并保留关键数值）。
+3. 写入 {PAPER_DIR}/_meta.md（manifest，模板见 references/structure.md；title 单行；在 meta fence 写入 one_liner（单行、≤110 字、含关键数值的单一核心结论，用于父索引表格）；摘要 ≤ 300 词并保留关键数值）。
 4. 自检必须通过（退出码 0）：
    python3 {SKILL_DIR}/scripts/verify_links.py {PAPER_DIR}
 5. 汇报：创建的文件清单、verify 输出、未决问题（如未引用的图片）。

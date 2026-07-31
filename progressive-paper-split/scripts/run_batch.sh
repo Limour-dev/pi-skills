@@ -76,7 +76,7 @@ skill 目录：{SKILL_DIR}
 2. 完整读取 {PAPER_DIR}/full.md（用 offset 分页直到读完全部内容），按 skill 的 Subagent workflow 拆分：
    front-matter / introduction / methods / results（每个结果一个 MD）/ tables（每表一个 MD）/ figures（每图一个 MD）/ discussion / references / back-matter，
    并写入 {PAPER_DIR}/INDEX.MD（Level 1 入口：速览表、摘要、核心结论、链接全部拆分文件；图片一律以 ../images/<文件> 引用）。
-3. 写入 {PAPER_DIR}/_meta.md（manifest，模板见 {SKILL_DIR}/references/structure.md；title 单行；摘要 ≤ 300 词并保留关键数值）。
+3. 写入 {PAPER_DIR}/_meta.md（manifest，模板见 {SKILL_DIR}/references/structure.md；title 单行；在 meta fence 写入 one_liner（单行、≤110 字、含关键数值的单一核心结论，用于父索引表格）；摘要 ≤ 300 词并保留关键数值）。
 4. 自检必须通过（退出码 0）：python3 {SKILL_DIR}/scripts/verify_links.py {PAPER_DIR}
    若有断链，修复后重跑自检直到退出码 0。
 5. 最后输出一行总结：BATCH_DONE {NN} <创建文件数> <verify: 0 broken links>。

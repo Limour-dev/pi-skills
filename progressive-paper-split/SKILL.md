@@ -18,9 +18,11 @@ Convert one paper directory (`full.md` + `images/`) into a 3-level progressive-d
 
 ## Disclosure levels
 
-- **Level 0** — `PARENT/INDEX.MD`: collection overview + per-paper abstracts + links to each `NN/INDEX.MD`.
+- **Level 0** — `PARENT/INDEX.MD`: collection overview + **one-line core conclusion** per paper + links to each `NN/INDEX.MD`. Full abstracts are intentionally *not* duplicated here (they live at Level 1) so the entry point stays short.
 - **Level 1** — `NN/INDEX.MD`: paper title, at-a-glance table, abstract, key findings, full navigation to every split file.
 - **Level 2/3** — category folders: section files, one MD per result/table/figure, references, declarations.
+
+> **Design lesson (keep Level 0 lean):** an earlier version embedded every paper's *full* structured abstract in `PARENT/INDEX.MD`; on a 23-paper collection that ballooned the entry point to ~580 lines — defeating its purpose as a navigation layer, since the same abstracts already live in each `NN/INDEX.MD`. Level 0 now carries only a one-line core conclusion per paper (authored once as `one_liner` in `_meta.md`). If a full abstract dump is ever wanted, regenerate with `build_parent_index.py --abstracts`.
 
 ## Subagent workflow (per paper)
 
@@ -36,7 +38,7 @@ Input: absolute path to a paper directory containing `full.md` and `images/`.
    - Two-column PDF artifacts: rejoin split paragraphs, reassemble references split across columns/page breaks, fix obvious OCR word-breaks (e.g. `mvocardial` → `myocardial`). **Never alter numbers, statistics, or meaning.**
    - Every split file starts with a back-link header to its `INDEX.MD`; `INDEX.MD` links to every split file. Bidirectional cross-links between results ↔ tables ↔ figures.
    - Keep `full.md` as an untouched archive.
-4. **Write `_meta.md`** (machine-readable manifest, template in [references/structure.md](references/structure.md)): title, status, journal/DOI, short authors, keywords, and a ~300-word structured abstract.
+4. **Write `_meta.md`** (machine-readable manifest, template in [references/structure.md](references/structure.md)): title, status, journal/DOI, short authors, keywords, a **single-line `one_liner`** core conclusion (≤ ~110 chars, with a key number — surfaced in the parent index table), and a ~300-word structured abstract.
 5. **Verify** (must exit 0):
    ```bash
    python3 {baseDir}/scripts/verify_links.py <PAPER_DIR>
@@ -62,7 +64,7 @@ Input: absolute path to a paper directory containing `full.md` and `images/`.
    ```bash
    python3 {baseDir}/scripts/build_parent_index.py <PARENT> --title "<collection title>"
    ```
-   Papers with `_meta.md` appear as ✅ with abstracts; papers without appear as ⏳ pending (titles auto-extracted from `full.md` H1). An optional topic paragraph in `<PARENT>/INTRO.md` is embedded automatically.
+   Papers with `_meta.md` appear as ✅ with a one-line core conclusion (the `one_liner` field) in the table; papers without appear as ⏳ pending (titles auto-extracted from `full.md` H1). An optional topic paragraph in `<PARENT>/INTRO.md` is embedded automatically. **Full per-paper abstracts are omitted by default** to keep Level 0 lean (they already live in each `NN/INDEX.MD`); pass `--abstracts` only if you explicitly want the verbose dump.
 4. Collection-wide check:
    ```bash
    python3 {baseDir}/scripts/verify_links.py <PARENT>
@@ -89,7 +91,7 @@ Lessons from the production run (15 papers, 14 headless `pi -p` subagents, concu
 
 - `scripts/run_batch.sh` — parallel headless batch runner. Env knobs: `PARENT` (required), `MAX`, `PI_BIN`, `PROVIDER`, `MODEL`, `THINKING`, `SKILL_DIR`, `PROMPT_FILE` (custom prompt template with `{PAPER_DIR} {NN} {PARENT} {SKILL_DIR}` placeholders; the embedded default is the field-proven prompt).
 - `scripts/verify_links.py PATH...` — recursively checks every internal MD link and image reference under PATH; prints unreferenced images; exits 1 on broken links.
-- `scripts/build_parent_index.py PARENT [--title T] [--intro F] [--out F]` — regenerates `PARENT/INDEX.MD` from `NN/_meta.md` manifests.
+- `scripts/build_parent_index.py PARENT [--title T] [--intro F] [--out F] [--abstracts]` — regenerates `PARENT/INDEX.MD` from `NN/_meta.md` manifests: a compact table with a one-line core conclusion per paper. Verbose abstract sections are off by default (`--abstracts` re-enables).
 
 ## Reference
 

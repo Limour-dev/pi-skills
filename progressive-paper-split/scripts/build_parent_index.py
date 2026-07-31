@@ -2,11 +2,15 @@
 """build_parent_index.py — regenerate a collection INDEX.MD from per-paper manifests.
 
 Usage:
-  python3 build_parent_index.py PARENT_DIR [--title TITLE] [--intro FILE] [--out FILE]
+  python3 build_parent_index.py PARENT_DIR [--title TITLE] [--intro FILE] [--out FILE] [--abstracts]
 
 Conventions:
 - Every subdirectory of PARENT_DIR that contains full.md is a paper (id = dir name).
-- Papers with _meta.md  -> status done (✅), entry link NN/INDEX.MD, abstract embedded.
+- Papers with _meta.md  -> status done (✅), entry link NN/INDEX.MD, plus a one-line
+  core conclusion (the `one_liner` fence field) shown in the paper-list table.
+- Full per-paper abstracts are NOT embedded by default — Level 0 must stay lean,
+  and the full abstract already lives in each NN/INDEX.MD. Pass --abstracts to
+  re-enable the verbose per-paper abstract section.
 - Papers without _meta -> status pending (⏳), entry link NN/full.md,
   title auto-extracted from full.md's first '# ' heading.
 - If --intro FILE or PARENT_DIR/INTRO.md exists, its content is embedded as the
@@ -80,6 +84,49 @@ def h1_title(full_md):
     return '(untitled)'
 
 
+def _cell(text):
+    """Make a string safe for one markdown table cell (no pipes or newlines)."""
+    if not text:
+        return ''
+    return ' '.join(str(text).split()).replace('|', '&#124;')
+
+
+def _one_liner(meta):
+    """One-line core conclusion for the parent index table.
+
+    Prefers an authored `one_liner` field from the _meta.md fence; falls back to a
+    truncated Results sentence from the abstract so older corpora without the field
+    still render something useful.
+    """
+    line = (meta.get('one_liner') or '').strip()
+    if line:
+        return line
+    abstract = meta.get('_abstract') or ''
+    candidate = ''
+    first = ''
+    for raw in abstract.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if not first:
+            first = stripped
+        plain = stripped.replace('*', '').strip()
+        if plain.lower().startswith('results') or plain.startswith('结果'):
+            candidate = plain
+            break
+    text = candidate or first
+    text = text.replace('*', '')
+    for label in ('Results:', 'Results', '结果:', '结果'):
+        if text.startswith(label):
+            text = text[len(label):]
+            break
+    text = text.lstrip(':： ').strip()
+    text = ' '.join(text.split())
+    if len(text) > 110:
+        text = text[:110].rsplit(' ', 1)[0].rstrip(',;:') + '…'
+    return text
+
+
 def load_intro(args, parent):
     if args.intro and os.path.isfile(args.intro):
         with open(args.intro, encoding='utf-8') as fh:
@@ -101,6 +148,9 @@ def main():
                     help='path to intro markdown (default: PARENT/INTRO.md if present)')
     ap.add_argument('--out', default=None,
                     help='output file (default: PARENT/INDEX.MD)')
+    ap.add_argument('--abstracts', action='store_true',
+                    help='also embed full per-paper abstract sections (default: off; '
+                         'full abstracts live in each NN/INDEX.MD, Level 0 stays lean)')
     args = ap.parse_args()
 
     parent = os.path.abspath(args.parent)
@@ -142,7 +192,7 @@ def main():
     out = []
     out.append(f'# {title}\n')
     out.append('> **渐进式披露 · Level 0（顶层入口）**')
-    out.append('> 本文件是整个论文集的第一披露层：仅呈现每篇论文的**摘要与必要说明**，并链接到各论文的子索引（`NN/INDEX.MD`）。')
+    out.append('> 本文件是整个论文集的第一披露层：以**一句话核心结论**概览每篇论文，并链接到各论文的子索引（`NN/INDEX.MD`）获取完整摘要与细节。')
     out.append('> 阅读路径：本文件 → 论文 `INDEX.MD` → 章节文件（results / methods / tables …）→ 具体表格/图片/参考文献。\n')
 
     if intro:
@@ -153,21 +203,23 @@ def main():
     out.append('- ⏳ 待处理（仅有 `full.md` 原文）\n')
 
     out.append(f'## 论文清单（Papers {first}–{last}）\n')
-    out.append('| # | 状态 | 标题 | 入口 |')
-    out.append('|---|---|---|---|')
+    out.append('| # | 状态 | 标题 | 核心结论 | 入口 |')
+    out.append('|---|---|---|---|---|')
     for p in papers:
         if p['done']:
             status = '✅ 已重构'
             entry = f"[{p['id']}/INDEX.MD]({p['id']}/INDEX.MD)"
+            conclusion = _cell(_one_liner(p['meta'])) or '—'
         else:
             status = '⏳ 待处理'
             entry = f"[{p['id']}/full.md]({p['id']}/full.md)"
-        out.append(f"| {p['id']} | {status} | {p['title']} | {entry} |")
+            conclusion = '—'
+        out.append(f"| {p['id']} | {status} | {_cell(p['title'])} | {conclusion} | {entry} |")
     out.append('')
     out.append('---\n')
 
     done_papers = [p for p in papers if p['done']]
-    if done_papers:
+    if args.abstracts and done_papers:
         out.append('## 已完成论文摘要（Abstracts）\n')
         for p in done_papers:
             m = p['meta']
