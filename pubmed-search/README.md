@@ -16,8 +16,9 @@ server, no npm install — invoke it from bash.
 ## Usage (bash)
 
 ```bash
-export PUBMED_EMAIL=you@example.com          # NCBI etiquette (required by default)
-export NCBI_API_KEY=...                      # optional: 10 req/s instead of 3
+# 本机已配置好身份环境变量（PUBMED_EMAIL / NCBI_API_KEY），agent 无需再 export
+# export PUBMED_EMAIL=you@example.com          # NCBI etiquette (required by default)
+# export NCBI_API_KEY=...                      # optional: 10 req/s instead of 3
 
 ./bin/pubmed-search search "glioblastoma[Title] AND MRI[Title]" --rows 5
 ./bin/pubmed-search get-by-pmid 28344011
