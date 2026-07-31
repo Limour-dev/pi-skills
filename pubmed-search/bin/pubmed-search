@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# pubmed-search CLI wrapper — run the pure-TS PubMed client from anywhere.
+#
+#   pubmed-search search "glioblastoma[Title]" --rows 5
+#   pubmed-search get-by-pmid 28344011
+#   pubmed-search mesh "Alzheimer Disease"
+#
+# Config: PUBMED_EMAIL / NCBI_API_KEY env vars, or --email / --api-key flags.
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec node "$DIR/cli.ts" "$@"

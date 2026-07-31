@@ -1,16 +1,19 @@
 {
   "name": "pubmed-search",
   "version": "1.0.0",
-  "description": "Zero-dependency, pure-TypeScript PubMed client via NCBI E-utilities (search, getByPmid, lookupMesh). Ported from nature-skills' pubmed.py.",
+  "description": "Zero-dependency, pure-TypeScript PubMed CLI via NCBI E-utilities (search, get-by-pmid, mesh). Ported from nature-skills' pubmed.py; invoked from bash, no MCP server.",
   "type": "module",
+  "bin": {
+    "pubmed-search": "bin/pubmed-search"
+  },
   "scripts": {
-    "demo": "node scripts/demo.ts",
+    "smoke": "bash scripts/smoke-test.sh",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=22.6.0"
   },
-  "keywords": ["pubmed", "ncbi", "eutils", "literature-search", "mesh"],
+  "keywords": ["pubmed", "ncbi", "eutils", "literature-search", "mesh", "cli"],
   "license": "Apache-2.0",
   "devDependencies": {
     "typescript": "^5.5.0"

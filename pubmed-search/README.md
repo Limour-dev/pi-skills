@@ -1,16 +1,10 @@
 # pubmed-search
 
-Zero-dependency, pure-TypeScript client for searching PubMed via the NCBI
-E-utilities API. Ported from
+Zero-dependency, pure-TypeScript **command-line** client for searching PubMed
+via the NCBI E-utilities API. Ported from
 [`nature-skills/.../sources/pubmed.py`](https://github.com/Yuan1z0825/nature-skills/blob/main/skills/nature-academic-search/mcp-server/sources/pubmed.py)
-(Apache-2.0, attribution retained in `src/pubmed.ts`).
-
-## What it does
-
-- `search(query, rows, sort)` — Boolean/MeSH/field-tagged PubMed search →
-  unified article records (title, authors, year, PMID, DOI, journal, abstract) + total match count.
-- `getByPmid(pmid)` — one article by PMID.
-- `lookupMesh(term)` — MeSH descriptor lookup (name + UI).
+(Apache-2.0, attribution retained in `src/pubmed.ts`). No Python, no MCP
+server, no npm install — invoke it from bash.
 
 ## Requirements
 
@@ -19,32 +13,38 @@ E-utilities API. Ported from
 - **No runtime npm dependencies.** Only `typescript` as a devDependency for
   `npm run typecheck`.
 
-## Usage
+## Usage (bash)
 
 ```bash
-npm run demo                 # live smoke test against NCBI
-npm run typecheck            # strict tsc --noEmit
+export PUBMED_EMAIL=you@example.com          # NCBI etiquette (required by default)
+export NCBI_API_KEY=...                      # optional: 10 req/s instead of 3
+
+./bin/pubmed-search search "glioblastoma[Title] AND MRI[Title]" --rows 5
+./bin/pubmed-search get-by-pmid 28344011
+./bin/pubmed-search mesh "Alzheimer Disease"
 ```
 
-```ts
-import { PubMedSource } from "./src/pubmed.ts";
-
-const pubmed = new PubMedSource({ email: process.env.PUBMED_EMAIL, apiKey: process.env.NCBI_API_KEY });
-const { total, results } = await pubmed.search("glioblastoma[Title] AND MRI[Title]", 5);
-```
-
-Config: constructor options → env (`PUBMED_EMAIL`, `NCBI_API_KEY`,
-`PUBMED_MAX_ROWS`, `PUBMED_CONFIG`) → JSON config file
-(`{ "pubmed": { "email", "api_key", "max_rows" } }`). See `SKILL.md`.
+Result JSON goes to stdout; errors to stderr; exit codes 0 / 1 / 2 (ok /
+runtime error / usage error). See `SKILL.md` for the full agent protocol,
+options, and workflow examples.
 
 ## Layout
 
 ```
-src/pubmed.ts                  # the client (port of pubmed.py)
-src/xml.ts                     # minimal ElementTree-compatible XML parser
-scripts/demo.ts                # runnable example / smoke test
+cli.ts                       # CLI entry point (the supported interface)
+bin/pubmed-search            # bash wrapper — run from anywhere
+src/pubmed.ts                # client library (port of pubmed.py)
+src/xml.ts                   # minimal ElementTree-compatible XML parser
+scripts/smoke-test.sh        # bash smoke test (live API)
 references/pubmed-query-syntax.md
-SKILL.md                       # agent-facing usage instructions
+SKILL.md
+```
+
+## Development
+
+```bash
+npm run smoke                # live smoke test of all subcommands
+npm run typecheck            # strict tsc --noEmit
 ```
 
 ## License
