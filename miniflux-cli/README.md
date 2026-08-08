@@ -1,7 +1,7 @@
 # miniflux-cli
 
 A pure TypeScript CLI for the [Miniflux](https://miniflux.app/) RSS reader API,
-plus a skill (`skill/SKILL.md`) that teaches AI agents how to use it.
+plus a skill (`SKILL.md`) that teaches AI agents how to use it.
 
 This is a TypeScript rewrite of the original Rust MCP server + OpenClaw skill
 from [openclaw-skill-miniflux](https://github.com/sinhong2011/openclaw-skill-miniflux),
