@@ -5,7 +5,7 @@ plus a skill (`SKILL.md`) that teaches AI agents how to use it.
 
 This is a TypeScript rewrite of the original Rust MCP server + OpenClaw skill
 from [openclaw-skill-miniflux](https://github.com/sinhong2011/openclaw-skill-miniflux),
-delivered as a lightweight, dependency-free CLI (no MCP server required).
+delivered as a lightweight CLI (no MCP server required).
 
 ## Features
 
@@ -15,7 +15,34 @@ delivered as a lightweight, dependency-free CLI (no MCP server required).
 - 24 subcommands covering reads (feeds, entries, categories, users, discovery,
   OPML export) and writes (mark read, bookmark, feed/category CRUD, refresh,
   OPML import).
-- JSON output, printer-friendly, scriptable.
+- Fully typed against the Miniflux v2 API (`src/api/types.ts`).
+- JSON output, printer-friendly, scriptable; clean errors on stderr with exit
+  code 1.
+
+## Project layout
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for design decisions and how to add
+endpoints/filters/tests. [SKILL.md](./SKILL.md) is the AI-agent contract.
+
+```
+src/
+  index.ts          # bin entry point
+  api/
+    client.ts       # typed Miniflux v2 API client
+    config.ts       # env loading + base URL normalization
+    error.ts        # MinifluxError
+    types.ts        # API response/filter types
+  cli/
+    program.ts      # commander command definitions
+    parsers.ts      # argument/option validation
+    output.ts       # JSON/text printers
+test/
+  config.test.ts    # env/URL normalization unit tests
+  parsers.test.ts   # CLI parser unit tests
+  client.test.ts    # client tests against an in-process mock HTTP server
+  cli.test.ts       # end-to-end tests (spawns the CLI against the mock server)
+  helpers/mock-server.ts
+```
 
 ## Install & build
 
@@ -34,12 +61,18 @@ npm link
 # now `miniflux <command>` works anywhere
 ```
 
-## Set up the skill
+## Install the skill
 
-Copy/symlink the skill into your agent's skills directory, e.g.:
+Install the whole collection:
 
 ```bash
-ln -s "$(pwd)/skill" ~/.pi/agent/skills/miniflux
+npx skills add Limour-dev/pi-skills
+```
+
+Or just this skill:
+
+```bash
+npx skills add Limour-dev/pi-skills --skill miniflux-cli
 ```
 
 ## Usage
@@ -60,9 +93,10 @@ Run `node dist/index.js --help` for the full command list.
 ## Development
 
 ```bash
-npm run dev      # run via tsx (no build step)
-npm run build    # compile TypeScript to dist/
-npm run typecheck
+npm run dev        # run via tsx (no build step)
+npm run build      # compile TypeScript to dist/
+npm run typecheck  # typecheck src + tests
+npm test           # unit + end-to-end tests (node:test via tsx, no live server needed)
 ```
 
 ## License
