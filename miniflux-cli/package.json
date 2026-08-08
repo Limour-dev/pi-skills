@@ -1,0 +1,29 @@
+{
+  "name": "miniflux-cli",
+  "version": "1.0.0",
+  "description": "Pure TypeScript CLI for the Miniflux RSS reader API",
+  "type": "module",
+  "bin": {
+    "miniflux": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsx": "^4.23.11",
+    "typescript": "^5.5.4"
+  }
+}
