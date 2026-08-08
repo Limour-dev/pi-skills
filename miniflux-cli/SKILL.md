@@ -22,22 +22,20 @@ All commands print JSON to stdout (except `healthcheck`, `export-opml`,
 
 ## Prerequisites
 
-- Node.js >= 18
-- The CLI is built at `{baseDir}/dist/index.js`.
+- Node.js >= 22.6 (runs TypeScript directly — no build step, no npm install).
 - Environment variables must be set:
   - `MINIFLUX_URL` (e.g. `https://rcdn.limour.top/`) — a trailing `/v1/` is tolerated and normalized away.
   - `MINIFLUX_API_KEY` (or `MINIFLUX_API_TOKEN`).
 
 ## Invocation
 
-Use the built binary directly:
+唯一入口：`<skill-dir>/bin/miniflux`（bash wrapper，直接运行 `node src/index.ts`，
+可在任何目录直接调用，无需构建）。若已链接到 PATH，直接 `miniflux <command> [args]`；
+否则用 `node <skill-dir>/src/index.ts <command> [args]`。
 
 ```bash
-node {baseDir}/dist/index.js <command> [args]
+miniflux <command> [args]
 ```
-
-Or, if linked into your PATH, just `miniflux <command> [args]`.
-
 ## Commands
 
 ### Read

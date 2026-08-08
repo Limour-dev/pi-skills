@@ -1,260 +1,361 @@
 /**
- * Commander program definition: all subcommands of the CLI.
+ * CLI command definitions and argument parsing. No external dependencies:
+ * arguments are parsed by hand so the CLI can run with plain `node` (type
+ * stripping) from any directory, with no build step and no npm install.
  * The client factory is injected so tests can supply a mock-backed client.
  */
-import { Command, Option } from "commander";
 import { readFileSync } from "node:fs";
-import type { MinifluxClient } from "../api/client.js";
-import type { EntryFilters, EntryStatus } from "../api/types.js";
-import { ENTRY_ORDER_FIELDS, ENTRY_STATUSES, SORT_DIRECTIONS } from "../api/types.js";
-import { printJson, printText } from "./output.js";
-import { parseBoolOption, parseId, parseIntOption } from "./parsers.js";
+import type { MinifluxClient } from "../api/client.ts";
+import type { EntryFilters, EntryStatus } from "../api/types.ts";
+import { ENTRY_ORDER_FIELDS, ENTRY_STATUSES, SORT_DIRECTIONS } from "../api/types.ts";
+import { printJson, printText } from "./output.ts";
+import { CliUsageError, parseBoolOption, parseId, parseIntOption } from "./parsers.ts";
 
 export const CLI_VERSION = "1.0.0";
 
 type ClientFactory = () => MinifluxClient;
 
-export function createProgram(makeClient: ClientFactory): Command {
-  const program = new Command();
-  program
-    .name("miniflux")
-    .description("Miniflux RSS reader CLI (reads MINIFLUX_URL and MINIFLUX_API_KEY env vars)")
-    .version(CLI_VERSION)
-    .showHelpAfterError("(run with --help for usage)");
+export interface CliProgram {
+  /** Parse argv (without node/script) and run the matching command. */
+  parseAsync(argv: string[]): Promise<void>;
+}
 
-  // ---------- Read commands ----------
+export function createProgram(makeClient: ClientFactory): CliProgram {
+  return { parseAsync: (argv) => run(makeClient, argv) };
+}
 
-  program
-    .command("healthcheck")
-    .description("Check if the Miniflux instance is reachable")
-    .action(async () => {
-      await makeClient().healthcheck();
+/** Split argv into ordered positional args and `--flag value` pairs. */
+function parseArgs(
+  argv: string[],
+): { positionals: string[]; flags: Record<string, string> } {
+  const positionals: string[] = [];
+  const flags: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--help" || a === "-h") {
+      flags.help = "true";
+    } else if (a === "--version" || a === "-V") {
+      flags.version = "true";
+    } else if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      if (eq !== -1) {
+        flags[a.slice(2, eq)] = a.slice(eq + 1);
+      } else {
+        const name = a.slice(2);
+        const next = argv[i + 1];
+        if (next !== undefined && !next.startsWith("--")) {
+          flags[name] = next;
+          i++;
+        } else {
+          flags[name] = "true";
+        }
+      }
+    } else {
+      positionals.push(a);
+    }
+  }
+  return { positionals, flags };
+}
+
+async function run(makeClient: ClientFactory, argv: string[]): Promise<void> {
+  const { positionals, flags } = parseArgs(argv);
+
+  if (flags.help && positionals.length === 0) {
+    printText(help());
+    return;
+  }
+  if (flags.version && positionals.length === 0) {
+    printText(`miniflux ${CLI_VERSION}`);
+    return;
+  }
+
+  const command = positionals.shift();
+  if (!command) {
+    throw new CliUsageError(`missing command\n\n${help()}`);
+  }
+
+  const client = makeClient();
+
+  switch (command) {
+    // ---------- Read commands ----------
+
+    case "healthcheck": {
+      await client.healthcheck();
       printText("Miniflux instance is healthy");
-    });
+      return;
+    }
 
-  program
-    .command("me")
-    .description("Get the currently authenticated user")
-    .action(async () => printJson(await makeClient().getMe()));
+    case "me": {
+      printJson(await client.getMe());
+      return;
+    }
 
-  program
-    .command("user-by-id")
-    .description("Get a user by numeric ID")
-    .argument("<id>", "user ID", parseId)
-    .action(async (id: number) => printJson(await makeClient().getUserById(id)));
+    case "user-by-id": {
+      printJson(await client.getUserById(parseId(requirePos(command, positionals, 0))));
+      return;
+    }
 
-  program
-    .command("user-by-name")
-    .description("Get a user by username")
-    .argument("<username>", "username")
-    .action(async (name: string) => printJson(await makeClient().getUserByName(name)));
+    case "user-by-name": {
+      printJson(await client.getUserByName(requirePos(command, positionals, 0)));
+      return;
+    }
 
-  program
-    .command("feeds")
-    .description("List all subscribed feeds")
-    .action(async () => printJson(await makeClient().getFeeds()));
+    case "feeds": {
+      printJson(await client.getFeeds());
+      return;
+    }
 
-  program
-    .command("feed")
-    .description("Get a single feed by ID")
-    .argument("<id>", "feed ID", parseId)
-    .action(async (id: number) => printJson(await makeClient().getFeed(id)));
+    case "feed": {
+      printJson(await client.getFeed(parseId(requirePos(command, positionals, 0))));
+      return;
+    }
 
-  program
-    .command("feed-icon")
-    .description("Get the favicon/icon for a feed by ID")
-    .argument("<id>", "feed ID", parseId)
-    .action(async (id: number) => printJson(await makeClient().getFeedIcon(id)));
+    case "feed-icon": {
+      printJson(await client.getFeedIcon(parseId(requirePos(command, positionals, 0))));
+      return;
+    }
 
-  program
-    .command("discover")
-    .description("Discover RSS/Atom feeds available at a URL")
-    .argument("<url>", "website URL")
-    .action(async (url: string) => printJson(await makeClient().discover(url)));
+    case "discover": {
+      printJson(await client.discover(requirePos(command, positionals, 0)));
+      return;
+    }
 
-  program
-    .command("categories")
-    .description("List all feed categories")
-    .action(async () => printJson(await makeClient().getCategories()));
+    case "categories": {
+      printJson(await client.getCategories());
+      return;
+    }
 
-  addEntryFilterOptions(program.command("entries").description("List/filter entries")).action(
-    async (opts) => {
-      printJson(await makeClient().getEntries(filtersFromOptions(opts)));
-    },
-  );
+    case "entries": {
+      printJson(await client.getEntries(filtersFromFlags(command, flags)));
+      return;
+    }
 
-  program
-    .command("entry")
-    .description("Get a single entry by ID")
-    .argument("<id>", "entry ID", parseId)
-    .action(async (id: number) => printJson(await makeClient().getEntry(id)));
+    case "entry": {
+      printJson(await client.getEntry(parseId(requirePos(command, positionals, 0))));
+      return;
+    }
 
-  addEntryFilterOptions(program.command("feed-entries").description("Get entries for a specific feed"))
-    .requiredOption("--feed-id <id>", "feed ID", parseId)
-    .action(async (opts) => {
-      printJson(await makeClient().getFeedEntries(opts.feedId, filtersFromOptions(opts)));
-    });
+    case "feed-entries": {
+      const feedId = FlagValue(flags, "feed-id");
+      if (feedId === undefined) {
+        throw new CliUsageError("feed-entries requires --feed-id <id>");
+      }
+      if (positionals.length > 0) {
+        throw new CliUsageError(`feed-entries does not take positional arguments`);
+      }
+      printJson(await client.getFeedEntries(parseId(feedId), filtersFromFlags(command, flags)));
+      return;
+    }
 
-  program
-    .command("export-opml")
-    .description("Export all feeds as OPML XML")
-    .action(async () => printText(await makeClient().exportOpml()));
+    case "export-opml": {
+      printText(await client.exportOpml());
+      return;
+    }
 
-  // ---------- Write commands ----------
+    // ---------- Write commands ----------
 
-  program
-    .command("import-opml")
-    .description("Import feeds from an OPML XML string or file")
-    .argument("<opml>", "OPML XML string, or @/path/to/file, or '-' for stdin")
-    .action(async (arg: string) => {
-      printText(await importOpmlFromArg(makeClient, arg));
-    });
+    case "import-opml": {
+      const arg = requirePos(command, positionals, 0);
+      printText(await importOpmlFromArg(client, arg));
+      return;
+    }
 
-  program
-    .command("create-category")
-    .description("Create a new feed category")
-    .argument("<title>", "category title")
-    .action(async (title: string) => printJson(await makeClient().createCategory(title)));
+    case "create-category": {
+      const title = requirePos(command, positionals, 0);
+      printJson(await client.createCategory(title));
+      return;
+    }
 
-  program
-    .command("update-category")
-    .description("Rename a category")
-    .argument("<id>", "category ID", parseId)
-    .argument("<title>", "new title")
-    .action(async (id: number, title: string) => printJson(await makeClient().updateCategory(id, title)));
+    case "update-category": {
+      const id = parseId(requirePos(command, positionals, 0));
+      const title = requirePos(command, positionals, 1);
+      printJson(await client.updateCategory(id, title));
+      return;
+    }
 
-  program
-    .command("delete-category")
-    .description("Delete a category (feeds move to default)")
-    .argument("<id>", "category ID", parseId)
-    .action(async (id: number) => {
-      await makeClient().deleteCategory(id);
+    case "delete-category": {
+      await client.deleteCategory(parseId(requirePos(command, positionals, 0)));
       printText("Category deleted successfully");
-    });
+      return;
+    }
 
-  program
-    .command("create-feed")
-    .description("Subscribe to a feed by URL and assign it to a category")
-    .argument("<feed-url>", "feed URL")
-    .argument("<category-id>", "category ID", parseId)
-    .action(async (feedUrl: string, categoryId: number) =>
-      printJson(await makeClient().createFeed(feedUrl, categoryId)),
-    );
+    case "create-feed": {
+      const feedUrl = requirePos(command, positionals, 0);
+      const categoryId = parseId(requirePos(command, positionals, 1));
+      printJson(await client.createFeed(feedUrl, categoryId));
+      return;
+    }
 
-  program
-    .command("update-feed")
-    .description("Update a feed's fields")
-    .argument("<id>", "feed ID", parseId)
-    .option("--title <title>", "new title")
-    .option("--category-id <id>", "new category ID", parseIntOption)
-    .option("--feed-url <url>", "new feed URL")
-    .option("--site-url <url>", "new site URL")
-    .option("--user-agent <ua>", "new user agent")
-    .action(async (id: number, opts) =>
+    case "update-feed": {
+      const id = parseId(requirePos(command, positionals, 0));
       printJson(
-        await makeClient().updateFeed(id, {
-          title: opts.title,
-          categoryId: opts.categoryId,
-          feedUrl: opts.feedUrl,
-          siteUrl: opts.siteUrl,
-          userAgent: opts.userAgent,
+        await client.updateFeed(id, {
+          title: FlagValue(flags, "title"),
+          categoryId:
+            FlagValue(flags, "category-id") !== undefined
+              ? parseIntOption(FlagValue(flags, "category-id")!)
+              : undefined,
+          feedUrl: FlagValue(flags, "feed-url"),
+          siteUrl: FlagValue(flags, "site-url"),
+          userAgent: FlagValue(flags, "user-agent"),
         }),
-      ),
-    );
+      );
+      return;
+    }
 
-  program
-    .command("delete-feed")
-    .description("Unsubscribe from a feed by ID")
-    .argument("<id>", "feed ID", parseId)
-    .action(async (id: number) => {
-      await makeClient().deleteFeed(id);
+    case "delete-feed": {
+      await client.deleteFeed(parseId(requirePos(command, positionals, 0)));
       printText("Feed deleted successfully");
-    });
+      return;
+    }
 
-  program
-    .command("refresh-feed")
-    .description("Trigger a synchronous refresh of a feed")
-    .argument("<id>", "feed ID", parseId)
-    .action(async (id: number) => {
-      await makeClient().refreshFeed(id);
+    case "refresh-feed": {
+      await client.refreshFeed(parseId(requirePos(command, positionals, 0)));
       printText("Feed refreshed successfully");
-    });
+      return;
+    }
 
-  program
-    .command("mark")
-    .description("Mark one or more entries as read/unread/removed")
-    .argument("<entry-ids...>", "entry IDs", parseId)
-    .addOption(
-      new Option("--status <status>", "target status")
-        .choices([...ENTRY_STATUSES])
-        .makeOptionMandatory(),
-    )
-    .action(async (ids: number[], opts: { status: EntryStatus }) => {
-      await makeClient().updateEntryStatus(ids, opts.status);
+    case "mark": {
+      if (positionals.length === 0) {
+        throw new CliUsageError("mark requires at least one <entry-id>");
+      }
+      const statusRaw = FlagValue(flags, "status");
+      if (statusRaw === undefined) {
+        throw new CliUsageError(`mark requires --status <status> (one of ${ENTRY_STATUSES.join(", ")})`);
+      }
+      if (!isEntryStatus(statusRaw)) {
+        throw new CliUsageError(
+          `invalid --status "${statusRaw}" (expected one of ${ENTRY_STATUSES.join(", ")})`,
+        );
+      }
+      const ids = positionals.map((p) => parseId(p));
+      await client.updateEntryStatus(ids, statusRaw);
       printText("Entry status updated successfully");
-    });
+      return;
+    }
 
-  program
-    .command("bookmark")
-    .description("Toggle the bookmark/star status of an entry")
-    .argument("<id>", "entry ID", parseId)
-    .action(async (id: number) => {
-      await makeClient().toggleBookmark(id);
+    case "bookmark": {
+      await client.toggleBookmark(parseId(requirePos(command, positionals, 0)));
       printText("Bookmark toggled successfully");
-    });
+      return;
+    }
 
-  return program;
+    default:
+      throw new CliUsageError(`unknown command "${command}"\n\n${help()}`);
+  }
+}
+
+/** Return the positional argument at `index` or throw a clean usage error. */
+function requirePos(command: string, positionals: string[], index: number): string {
+  const v = positionals[index];
+  if (v === undefined) {
+    throw new CliUsageError(`"${command}" is missing required argument #${index + 1}`);
+  }
+  return v;
+}
+
+function FlagValue(flags: Record<string, string>, name: string): string | undefined {
+  return flags[name];
+}
+
+function isEntryStatus(v: string): v is EntryStatus {
+  return (ENTRY_STATUSES as readonly string[]).includes(v);
 }
 
 /** Resolve the import-opml argument: inline XML, @file, or '-' for stdin. */
-async function importOpmlFromArg(makeClient: ClientFactory, arg: string): Promise<string> {
+async function importOpmlFromArg(client: MinifluxClient, arg: string): Promise<string> {
   let opml = arg;
   if (arg === "-") {
     opml = readFileSync(0, "utf8");
   } else if (arg.startsWith("@")) {
     opml = readFileSync(arg.slice(1), "utf8");
   }
-  await makeClient().importOpml(opml);
+  await client.importOpml(opml);
   return "OPML imported successfully";
 }
 
-/** Entry filter options shared by `entries` and `feed-entries`. */
-function addEntryFilterOptions(cmd: Command): Command {
-  return cmd
-    .addOption(new Option("--status <status>", "entry status").choices([...ENTRY_STATUSES]))
-    .option("--offset <n>", "pagination offset", parseIntOption)
-    .option("--limit <n>", "result limit (recommend 20)", parseIntOption)
-    .addOption(new Option("--order <field>", "sort field").choices([...ENTRY_ORDER_FIELDS]))
-    .addOption(new Option("--direction <dir>", "sort direction").choices([...SORT_DIRECTIONS]))
-    .option("--before <ts>", "published before this Unix timestamp", parseIntOption)
-    .option("--after <ts>", "published after this Unix timestamp", parseIntOption)
-    .option("--before-entry-id <id>", "entries before this entry ID", parseIntOption)
-    .option("--after-entry-id <id>", "entries after this entry ID", parseIntOption)
-    .option("--starred <bool>", "filter bookmarked entries (true/false)", parseBoolOption);
+/** Build EntryFilters from the entry-listing command's flags. */
+function filtersFromFlags(command: string, flags: Record<string, string>): EntryFilters {
+  const f: EntryFilters = {};
+  if (flags.status !== undefined) {
+    if (!isEntryStatus(flags.status)) {
+      throw new CliUsageError(
+        `invalid --status "${flags.status}" (expected one of ${ENTRY_STATUSES.join(", ")})`,
+      );
+    }
+    f.status = flags.status;
+  }
+  if (flags.offset !== undefined) f.offset = parseIntOption(flags.offset);
+  if (flags.limit !== undefined) f.limit = parseIntOption(flags.limit);
+  if (flags.order !== undefined) {
+    if (!(ENTRY_ORDER_FIELDS as readonly string[]).includes(flags.order)) {
+      throw new CliUsageError(
+        `invalid --order "${flags.order}" (expected one of ${ENTRY_ORDER_FIELDS.join(", ")})`,
+      );
+    }
+    f.order = flags.order as EntryFilters["order"];
+  }
+  if (flags.direction !== undefined) {
+    if (!(SORT_DIRECTIONS as readonly string[]).includes(flags.direction)) {
+      throw new CliUsageError(
+        `invalid --direction "${flags.direction}" (expected one of ${SORT_DIRECTIONS.join(", ")})`,
+      );
+    }
+    f.direction = flags.direction as EntryFilters["direction"];
+  }
+  if (flags.before !== undefined) f.before = parseIntOption(flags.before);
+  if (flags.after !== undefined) f.after = parseIntOption(flags.after);
+  if (flags["before-entry-id"] !== undefined) f.beforeEntryId = parseIntOption(flags["before-entry-id"]);
+  if (flags["after-entry-id"] !== undefined) f.afterEntryId = parseIntOption(flags["after-entry-id"]);
+  if (flags.starred !== undefined) f.starred = parseBoolOption(flags.starred);
+  return f;
 }
 
-function filtersFromOptions(opts: {
-  status?: EntryStatus;
-  offset?: number;
-  limit?: number;
-  order?: EntryFilters["order"];
-  direction?: EntryFilters["direction"];
-  before?: number;
-  after?: number;
-  beforeEntryId?: number;
-  afterEntryId?: number;
-  starred?: boolean;
-}): EntryFilters {
-  return {
-    status: opts.status,
-    offset: opts.offset,
-    limit: opts.limit,
-    order: opts.order,
-    direction: opts.direction,
-    before: opts.before,
-    after: opts.after,
-    beforeEntryId: opts.beforeEntryId,
-    afterEntryId: opts.afterEntryId,
-    starred: opts.starred,
-  };
+function help(): string {
+  return `Usage:
+  miniflux <command> [args]
+
+Read commands:
+  healthcheck                          Check if the Miniflux instance is reachable
+  me                                   Get the currently authenticated user
+  user-by-id <id>                      Get a user by numeric ID
+  user-by-name <username>              Get a user by username
+  feeds                                List all subscribed feeds
+  feed <id>                            Get a single feed by ID
+  feed-icon <id>                       Get the favicon/icon for a feed by ID
+  discover <url>                       Discover RSS/Atom feeds available at a URL
+  categories                           List all feed categories
+  entries [filters]                    List/filter entries
+  entry <id>                           Get a single entry by ID
+  feed-entries --feed-id <id> [filters]  Get entries for a specific feed
+  export-opml                          Export all feeds as OPML XML
+
+Write commands:
+  import-opml <opml|@file|->           Import feeds from an OPML XML string or file
+  create-category <title>              Create a new feed category
+  update-category <id> <title>         Rename a category
+  delete-category <id>                 Delete a category (feeds move to default)
+  create-feed <feed-url> <category-id> Subscribe to a feed by URL
+  update-feed <id> [--title <t>] [--category-id <n>] [--feed-url <u>] [--site-url <u>] [--user-agent <ua>]
+  delete-feed <id>                     Unsubscribe from a feed by ID
+  refresh-feed <id>                    Trigger a synchronous refresh of a feed
+  mark <entry-ids...> --status <s>     Mark one or more entries as read/unread/removed
+  bookmark <id>                        Toggle the bookmark/star status of an entry
+
+Entry filters (for entries / feed-entries):
+  --status <s>      read | unread | removed
+  --offset <n>      pagination offset
+  --limit <n>       result limit (recommend 20)
+  --order <o>       id | status | published_at | category_title | category_id | author | title
+  --direction <d>   asc | desc
+  --before <ts> / --after <ts>                 Unix timestamps
+  --before-entry-id <id> / --after-entry-id <id>
+  --starred <bool>  true/false
+
+Options:
+  -h, --help        Show this help
+  -V, --version     Show version
+
+Environment: MINIFLUX_URL and MINIFLUX_API_KEY (or MINIFLUX_API_TOKEN) are required.
+Output: JSON on stdout, errors on stderr. Exit: 0 ok, 1 error.`;
 }

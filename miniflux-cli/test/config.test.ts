@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadConfig, normalizeBaseUrl } from "../src/api/config.js";
-import { MinifluxError } from "../src/api/error.js";
+import { loadConfig, normalizeBaseUrl } from "../src/api/config.ts";
+import { MinifluxError } from "../src/api/error.ts";
 
 test("normalizeBaseUrl strips trailing slashes", () => {
   assert.equal(normalizeBaseUrl("https://example.com/"), "https://example.com");

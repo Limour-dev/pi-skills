@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { after, before, test } from "node:test";
-import { MockServer, startMockServer } from "./helpers/mock-server.js";
+import { MockServer, startMockServer } from "./helpers/mock-server.ts";
 
 const TSX = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
 const ENTRYPOINT = fileURLToPath(new URL("../src/index.ts", import.meta.url));

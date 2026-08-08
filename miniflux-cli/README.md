@@ -33,7 +33,7 @@ src/
     error.ts        # MinifluxError
     types.ts        # API response/filter types
   cli/
-    program.ts      # commander command definitions
+    program.ts      # command definitions + hand-rolled arg parsing (no commander)
     parsers.ts      # argument/option validation
     output.ts       # JSON/text printers
 test/
@@ -44,23 +44,23 @@ test/
   helpers/mock-server.ts
 ```
 
-## Install & build
+## Install & run
 
-Requires Node.js >= 18.
+Requires Node.js >= 22.6. No build step and no `npm install` needed — the CLI is
+a set of plain TypeScript files that Node runs directly (`bin/miniflux` and
+`src/index.ts`).
 
 ```bash
-cd miniflux-cli
-npm install
-npm run build
+bin/miniflux healthcheck
+node src/index.ts feeds
 ```
 
-The built CLI is at `dist/index.js`. Optionally link it into your PATH:
+Optionally link it into your PATH:
 
 ```bash
 npm link
 # now `miniflux <command>` works anywhere
 ```
-
 ## Install the skill
 
 Install the whole collection:
@@ -80,23 +80,21 @@ npx skills add Limour-dev/pi-skills --skill miniflux
 ## Usage
 
 ```bash
-node dist/index.js healthcheck
-node dist/index.js feeds
-node dist/index.js entries --status unread --limit 20
-node dist/index.js entry <id>
-node dist/index.js mark <id> --status read
-node dist/index.js bookmark <id>
-node dist/index.js discover https://example.com
-node dist/index.js create-feed <feed-url> <category-id>
-```
+miniflux healthcheck
+miniflux feeds
+miniflux entries --status unread --limit 20
+miniflux entry <id>
+miniflux mark <id> --status read
+miniflux bookmark <id>
+miniflux discover https://example.com
+miniflux create-feed <feed-url> <category-id>
 
-Run `node dist/index.js --help` for the full command list.
+Run `miniflux --help` for the full command list.
 
 ## Development
 
 ```bash
-npm run dev        # run via tsx (no build step)
-npm run build      # compile TypeScript to dist/
+npm run dev        # run directly with node (no build step)
 npm run typecheck  # typecheck src + tests
 npm test           # unit + end-to-end tests (node:test via tsx, no live server needed)
 ```

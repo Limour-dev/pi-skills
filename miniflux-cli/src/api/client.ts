@@ -1,8 +1,9 @@
 /**
  * Typed Miniflux v2 API client.
  */
-import { MinifluxConfig, normalizeBaseUrl } from "./config.js";
-import { MinifluxError } from "./error.js";
+import type { MinifluxConfig } from "./config.ts";
+import { normalizeBaseUrl } from "./config.ts";
+import { MinifluxError } from "./error.ts";
 import type {
   DiscoverResult,
   EntryFilters,
@@ -14,8 +15,8 @@ import type {
   MinifluxFeed,
   MinifluxUser,
   UpdateFeedFields,
-} from "./types.js";
-import { ENTRY_STATUSES } from "./types.js";
+} from "./types.ts";
+import { ENTRY_STATUSES } from "./types.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { InvalidArgumentError } from "commander";
-import { parseBoolOption, parseId, parseIntOption } from "../src/cli/parsers.js";
+import { CliUsageError, parseBoolOption, parseId, parseIntOption } from "../src/cli/parsers.ts";
 
 test("parseId accepts positive integers", () => {
   assert.equal(parseId("1"), 1);
@@ -10,7 +9,7 @@ test("parseId accepts positive integers", () => {
 
 test("parseId rejects zero, negatives, floats and garbage", () => {
   for (const bad of ["0", "-1", "1.5", "abc", "", "NaN"]) {
-    assert.throws(() => parseId(bad), InvalidArgumentError);
+    assert.throws(() => parseId(bad), CliUsageError);
   }
 });
 
@@ -22,7 +21,7 @@ test("parseIntOption accepts integers including zero and negatives", () => {
 
 test("parseIntOption rejects floats and garbage", () => {
   for (const bad of ["1.5", "abc", ""]) {
-    assert.throws(() => parseIntOption(bad), InvalidArgumentError);
+    assert.throws(() => parseIntOption(bad), CliUsageError);
   }
 });
 
@@ -37,6 +36,6 @@ test("parseBoolOption accepts common truthy/falsy spellings", () => {
 
 test("parseBoolOption rejects anything else", () => {
   for (const bad of ["maybe", "2", ""]) {
-    assert.throws(() => parseBoolOption(bad), InvalidArgumentError);
+    assert.throws(() => parseBoolOption(bad), CliUsageError);
   }
 });

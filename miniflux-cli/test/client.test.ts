@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { MinifluxClient, buildEntryQuery, buildUpdateFeedBody } from "../src/api/client.js";
-import { MinifluxError } from "../src/api/error.js";
-import { MockServer, startMockServer } from "./helpers/mock-server.js";
+import { MinifluxClient, buildEntryQuery, buildUpdateFeedBody } from "../src/api/client.ts";
+import { MinifluxError } from "../src/api/error.ts";
+import { MockServer, startMockServer } from "./helpers/mock-server.ts";
 
 let server: MockServer;
 

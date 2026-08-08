@@ -1,7 +1,7 @@
 /**
  * Configuration loading from environment variables.
  */
-import { MinifluxError } from "./error.js";
+import { MinifluxError } from "./error.ts";
 
 export interface MinifluxConfig {
   baseUrl: string;

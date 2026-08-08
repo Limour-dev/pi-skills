@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# miniflux CLI wrapper — run the pure-TS Miniflux client from anywhere.
+#
+#   miniflux healthcheck
+#   miniflux feeds
+#   miniflux entries --status unread --limit 20
+#   miniflux me
+#
+# Config: MINIFLUX_URL and MINIFLUX_API_KEY (or MINIFLUX_API_TOKEN) env vars.
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec node "$DIR/src/index.ts" "$@"

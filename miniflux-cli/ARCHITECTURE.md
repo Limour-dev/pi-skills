@@ -24,9 +24,9 @@ src/index.ts          entry point only: wires client factory into the program,
 │                     Pure helpers exported for testability: buildEntryQuery(),
 │                     buildUpdateFeedBody().
 │
-└─ src/cli/           commander layer (imports api/, never the reverse)
-     parsers.ts       parseId / parseIntOption / parseBoolOption — throw commander's
-                      InvalidArgumentError so failures become clean one-line errors.
+└─ src/cli/           arg-parsing layer (imports api/, never the reverse)
+     parsers.ts       parseId / parseIntOption / parseBoolOption — throw CliUsageError
+                      so failures become clean one-line errors.
      output.ts        printJson (pretty, stdout) / printText (stdout) / printError
                       (stderr). Data commands print JSON; confirmation messages and
                       OPML print text — this split is documented in SKILL.md.
@@ -43,7 +43,7 @@ Dependency rule: `cli → api`, never `api → cli`. Nothing in `api/` may touch
 ## Request flow
 
 ```
-argv → commander action → clientFactory() (= new MinifluxClient(loadConfig()))
+argv → parseArgs → command handler → clientFactory() (= new MinifluxClient(loadConfig()))
      → client method → fetchWithTimeout (AbortController, default 30s)
      → parseResponse: !ok → MinifluxError with server's error_message;
                       204 / content-length:0 / empty body → undefined;
@@ -114,26 +114,26 @@ runs fully offline).
 - `cli.test.ts` — spawns the real CLI: `node_modules/.bin/tsx src/index.ts`
   (paths resolved from `import.meta.url`, so it works from any cwd). Env vars
   point at the mock server. Assert on exit code, stdout JSON, stderr text.
-  Note: commander exits 1 itself for its own option errors (bad choice,
-  missing required option); `main()` sets `exitCode = 1` for runtime errors.
+  Note: the CLI exits 1 itself for both usage errors (`CliUsageError`) and
+  runtime errors (`MinifluxError`); `main()` sets `exitCode = 1`.
 
 `npm run typecheck` checks src with `tsconfig.json` and tests with
 `tsconfig.test.json` (extends the base config, `noEmit`, includes `test/`).
-Don't add `test/` to the base tsconfig — it would break the `rootDir`/`dist`
-layout.
+Don't add `test/` to the base tsconfig — keep it scoped to `src/`.
 
 ## Build & constraints
 
-- ESM (`"type": "module"`); relative imports use `.js` extensions even in
-  `.ts` sources (NodeNext resolution) — keep it that way.
-- `tsc` compiles `src/` → `dist/`; `dist/index.js` is the npm bin and what
-  SKILL.md invokes. **Rebuild (`npm run build`) after changing src/** or the
-  skill will run stale code.
-- Node >= 18 required (global `fetch`, `AbortController`). No new runtime
-  dependencies without strong reason — commander is currently the only one.
+- ESM (`"type": "module"`); relative imports use `.ts` extensions so Node's
+  native type stripping (Node >= 22.6) runs the sources directly — no build step.
+  `tsc --noEmit` typechecks; `tsconfig.json` sets `allowImportingTsExtensions`
+  and `noEmit`.
+- `bin/miniflux` is the entry point: a bash wrapper that runs
+  `node src/index.ts`. No compilation, no `dist/`, no `npm install` needed.
+- Node >= 22.6 required (global `fetch`, `AbortController`, type stripping).
+  Zero runtime dependencies — commander is gone; args are parsed by hand in
+  `src/cli/program.ts` and `src/cli/parsers.ts` (errors via `CliUsageError`).
 - Keep the public command surface stable: SKILL.md compatibility is the
-  contract. Tests run via tsx, builds via tsc, so no syntax restrictions.
-
+  contract. Tests run via tsx (dev-only), typecheck via tsc.
 ## Known intentional behaviors
 
 - `normalizeBaseUrl` strips only **one** trailing `/v1` (`/v1/v1` → `/v1`).
@@ -141,5 +141,4 @@ layout.
   `parseId` rejects them.
 - `import-opml` argument forms: inline XML, `@/path/to/file`, `-` (stdin,
   via `readFileSync(0)`).
-- `updateEntryStatus` double-validates status (commander choices + client
-  runtime guard) because the client is also usable as a library.
+- `updateEntryStatus` double-validates status (CLI-side check + client
