@@ -6,6 +6,22 @@ via the NCBI E-utilities API. Ported from
 (Apache-2.0, attribution retained in `src/pubmed.ts`). No Python, no MCP
 server, no npm install — invoke it from bash.
 
+Part of the [Limour-dev/pi-skills](https://github.com/Limour-dev/pi-skills) collection.
+
+## Install
+
+Install the whole collection:
+
+```bash
+npx skills add Limour-dev/pi-skills
+```
+
+Or just this skill:
+
+```bash
+npx skills add Limour-dev/pi-skills --skill pubmed-search
+```
+
 ## Requirements
 
 - Node ≥ 23.6 (runs TypeScript natively), or ≥ 22.6 with
