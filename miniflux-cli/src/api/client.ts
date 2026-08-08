@@ -23,7 +23,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 /** Build the `?…` query string for the entry listing endpoints. */
 export function buildEntryQuery(filters: EntryFilters = {}): string {
   const p = new URLSearchParams();
-  if (filters.status !== undefined) p.set("status", filters.status);
+  for (const s of toStatusList(filters.status)) p.append("status", s);
   if (filters.offset !== undefined) p.set("offset", String(filters.offset));
   if (filters.limit !== undefined) p.set("limit", String(filters.limit));
   if (filters.order !== undefined) p.set("order", filters.order);
@@ -33,8 +33,15 @@ export function buildEntryQuery(filters: EntryFilters = {}): string {
   if (filters.beforeEntryId !== undefined) p.set("before_entry_id", String(filters.beforeEntryId));
   if (filters.afterEntryId !== undefined) p.set("after_entry_id", String(filters.afterEntryId));
   if (filters.starred !== undefined) p.set("starred", String(filters.starred));
+  if (filters.search !== undefined) p.set("search", filters.search);
   const qs = p.toString();
   return qs ? `?${qs}` : "";
+}
+
+/** Normalize a single status or a list of statuses into a string array. */
+function toStatusList(status: EntryFilters["status"]): string[] {
+  if (status === undefined) return [];
+  return Array.isArray(status) ? (status as string[]) : [status as string];
 }
 
 /** Map camelCase update-feed fields to the snake_case API body. */
@@ -108,6 +115,11 @@ export class MinifluxClient {
 
   getEntries(filters: EntryFilters = {}): Promise<EntryListResponse> {
     return this.request("GET", `entries${buildEntryQuery(filters)}`);
+  }
+
+  /** Full-text search over entries (Miniflux `search` filter). */
+  search(query: string, filters: EntryFilters = {}): Promise<EntryListResponse> {
+    return this.getEntries({ ...filters, search: query });
   }
 
   getEntry(id: number): Promise<MinifluxEntry> {

@@ -12,9 +12,17 @@ delivered as a lightweight CLI (no MCP server required).
 - Reads credentials from the environment:
   - `MINIFLUX_URL` — e.g. `https://rcdn.limour.top/` (trailing `/v1/` is tolerated and normalized away)
   - `MINIFLUX_API_KEY` (also accepts `MINIFLUX_API_TOKEN`)
-- 24 subcommands covering reads (feeds, entries, categories, users, discovery,
-  OPML export) and writes (mark read, bookmark, feed/category CRUD, refresh,
-  OPML import).
+- 25 subcommands covering reads (feeds, entries, search, categories, users,
+  discovery, OPML export) and writes (mark read, bookmark, feed/category CRUD,
+  refresh, OPML import).
+- Full-text `search <keyword>` over entries with the same filters as listings.
+- Bulk mark (`mark --all`) with `--dry-run` preview and `--yes` confirmation.
+- Flexible entry-listing filters: multi-status (`--status read,unread`), date
+  ranges (`--before`/`--after` accept Unix ts, ISO dates, `now`, or relative
+  durations like `7d`), auto-pagination (`--all`).
+- Output shaping to cut token usage: `--fields`, `--compact`, `--plain-text`;
+  zero-value timestamps are emitted as `null`.
+- Unknown commands get a close-match suggestion.
 - Fully typed against the Miniflux v2 API (`src/api/types.ts`).
 - JSON output, printer-friendly, scriptable; clean errors on stderr with exit
   code 1.

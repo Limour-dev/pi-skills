@@ -40,10 +40,12 @@ miniflux me                                       # current authenticated user
 miniflux feeds                                    # list all feeds
 miniflux feed-entries --feed-id <id> --limit 20   # a feed's entries
 miniflux entries --status unread --limit 20       # unread entries
-miniflux entry <id>                               # read a specific article
-miniflux categories                               # list categories
-miniflux mark <entry-id...> --status read         # mark read/unread/removed
-miniflux bookmark <id>                            # toggle star
+miniflux search <keyword>                        # full-text search entries
+miniflux entry <id>                              # read a specific article
+miniflux categories                              # list categories
+miniflux mark <entry-id...> --status read        # mark read/unread/removed
+miniflux mark --all --status read                # bulk-mark all unread as read
+miniflux bookmark <id>                           # toggle star
 miniflux discover <url>                           # discover feeds at a URL
 miniflux create-feed <feed-url> <category-id>     # subscribe to a feed
 miniflux export-opml                              # all feeds as OPML XML

@@ -88,7 +88,8 @@ export interface DiscoverResult {
 
 /** Query filters accepted by the entry listing endpoints. */
 export interface EntryFilters {
-  status?: EntryStatus;
+  /** Single status, or multiple comma-separated statuses (e.g. read,unread). */
+  status?: EntryStatus | EntryStatus[];
   offset?: number;
   limit?: number;
   order?: EntryOrderField;
@@ -98,6 +99,10 @@ export interface EntryFilters {
   beforeEntryId?: number;
   afterEntryId?: number;
   starred?: boolean;
+  /** Full-text search query (Miniflux `search` parameter). */
+  search?: string;
+  /** Fetch entries for a specific feed (used by feed-entries). */
+  feedId?: number;
 }
 
 /** Mutable fields of a feed (used by update-feed). */

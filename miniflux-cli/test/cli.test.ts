@@ -75,7 +75,7 @@ test("mark requires --status and validates it", async () => {
 
   const ok = await runCli(["mark", "5", "--status", "read"]);
   assert.equal(ok.code, 0);
-  assert.match(ok.stdout, /Entry status updated successfully/);
+  assert.match(ok.stdout, /Marked 1 entr.* as read/);
 });
 
 test("feed-entries requires --feed-id", async () => {
@@ -108,4 +108,46 @@ test("export-opml prints raw XML", async () => {
   const { code, stdout } = await runCli(["export-opml"]);
   assert.equal(code, 0);
   assert.equal(stdout.trim(), "<opml>x</opml>");
+});
+
+test("search forwards the query as the search filter", async () => {
+  const { code, stdout } = await runCli(["search", "SpaceX", "--status", "unread"]);
+  assert.equal(code, 0);
+  const data = JSON.parse(stdout) as { total: number };
+  assert.equal(data.total, 1);
+  const req = server.requests.at(-1)!;
+  assert.match(req.url, /search=SpaceX/);
+  assert.match(req.url, /status=unread/);
+});
+
+test("mark --all bulk-marks matching entries and reports the count", async () => {
+  const { code, stdout } = await runCli(["mark", "--all", "--status", "read", "--from", "unread"]);
+  assert.equal(code, 0);
+  assert.match(stdout, /Marked 1 unread entry as read/);
+  const req = server.requests.at(-1)!;
+  assert.equal(req.method, "PUT");
+  assert.deepEqual(JSON.parse(req.body), { entry_ids: [5], status: "read" });
+});
+
+test("mark --all --dry-run previews without applying", async () => {
+  const before = server.requests.length;
+  const { code, stdout } = await runCli(["mark", "--all", "--status", "read", "--dry-run"]);
+  assert.equal(code, 0);
+  assert.match(stdout, /\[dry-run\] Would mark 1 unread entry as read/);
+  const putAfter = server.requests.slice(before).filter((r) => r.method === "PUT");
+  assert.equal(putAfter.length, 0);
+});
+
+test("unknown command suggests a similar one", async () => {
+  const { code, stderr } = await runCli(["entrys"]);
+  assert.equal(code, 1);
+  assert.match(stderr, /unknown command "entrys"/);
+  assert.match(stderr, /did you mean "entry/);
+});
+
+test("entries --fields keeps only the requested fields", async () => {
+  const { code, stdout } = await runCli(["entries", "--fields", "id,title"]);
+  assert.equal(code, 0);
+  const data = JSON.parse(stdout) as { entries: Array<Record<string, unknown>> };
+  assert.deepEqual(Object.keys(data.entries[0]).sort(), ["id", "title"]);
 });

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CliUsageError, parseBoolOption, parseId, parseIntOption } from "../src/cli/parsers.ts";
+import { parseTimeOption, splitList } from "../src/cli/parsers.ts";
 
 test("parseId accepts positive integers", () => {
   assert.equal(parseId("1"), 1);
@@ -38,4 +39,30 @@ test("parseBoolOption rejects anything else", () => {
   for (const bad of ["maybe", "2", ""]) {
     assert.throws(() => parseBoolOption(bad), CliUsageError);
   }
+});
+
+test("parseTimeOption accepts unix timestamps and ISO dates", () => {
+  assert.equal(parseTimeOption("1700000000"), 1700000000);
+  assert.equal(parseTimeOption("2026-08-01T00:00:00Z"), Date.UTC(2026, 7, 1) / 1000);
+  assert.equal(parseTimeOption("now"), Math.floor(Date.now() / 1000));
+});
+
+test("parseTimeOption accepts relative durations", () => {
+  const now = Math.floor(Date.now() / 1000);
+  assert.equal(parseTimeOption("1h"), now + 3600);
+  assert.equal(parseTimeOption("7d"), now + 7 * 86400);
+  assert.equal(parseTimeOption("30m"), now + 30 * 60);
+});
+
+test("parseTimeOption rejects garbage and millisecond timestamps", () => {
+  assert.throws(() => parseTimeOption(""), CliUsageError);
+  assert.throws(() => parseTimeOption("not-a-time"), CliUsageError);
+  assert.throws(() => parseTimeOption("1700000000000"), CliUsageError); // ms
+});
+
+test("splitList splits on commas and trims empties", () => {
+  assert.deepEqual(splitList("read,unread"), ["read", "unread"]);
+  assert.deepEqual(splitList(" read , unread "), ["read", "unread"]);
+  assert.deepEqual(splitList(""), []);
+  assert.deepEqual(splitList("read,"), ["read"]);
 });
