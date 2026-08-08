@@ -55,12 +55,29 @@ bin/miniflux healthcheck
 node src/index.ts feeds
 ```
 
-Optionally link it into your PATH:
+### PATH setup (so `miniflux <command>` works anywhere)
+
+The skill installer copies the CLI to `~/.agents/skills/miniflux` (pi symlinks it
+into `~/.pi/agent/skills/`) but does **not** put `miniflux` on PATH. The wrapper
+auto-links itself on first invocation via full path — run it once:
 
 ```bash
-npm link
-# now `miniflux <command>` works anywhere
+~/.pi/agent/skills/miniflux/bin/miniflux healthcheck   # prints a "linked …" notice
+miniflux feeds                                        # works afterwards
 ```
+
+It symlinks into `~/.pi/agent/bin` (first on pi's PATH) or `~/.local/bin`. To set it
+up manually instead:
+
+```bash
+ln -s ~/.pi/agent/skills/miniflux/bin/miniflux ~/.pi/agent/bin/miniflux
+# or for this session only:
+export PATH="$HOME/.pi/agent/skills/miniflux/bin:$PATH"
+# or via npm:
+npm link   # registers the package's bin in the npm prefix
+```
+
+Verify with `command -v miniflux`.
 ## Install the skill
 
 Install the whole collection:

@@ -8,5 +8,49 @@
 #
 # Config: MINIFLUX_URL and MINIFLUX_API_KEY (or MINIFLUX_API_TOKEN) env vars.
 set -euo pipefail
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Resolve the real location of this script even when invoked through a symlink
+# on PATH (e.g. ~/.pi/agent/bin/miniflux -> <skill-dir>/bin/miniflux).
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+
+# One-time auto-link: the skill installer copies this directory to
+# ~/.agents/skills/miniflux (and pi symlinks it into ~/.pi/agent/skills) but
+# does NOT put `miniflux` on PATH. On first invocation via full path, symlink
+# this wrapper into the first suitable bin dir so `miniflux <command>` works
+# afterwards. Never clobbers an existing `miniflux` on PATH; prints a hint if
+# linking fails.
+maybe_link() {
+  # Already reachable on PATH and resolving to this same script? Done.
+  local on_path resolved
+  on_path="$(command -v miniflux 2>/dev/null || true)"
+  if [ -n "$on_path" ]; then
+    resolved="$(readlink -f "$on_path" 2>/dev/null || echo "$on_path")"
+    [ "$resolved" = "$SELF" ] && return 0
+  fi
+
+  # Prefer ~/.pi/agent/bin (first on pi's PATH), then ~/.local/bin (XDG).
+  local d
+  for d in "$HOME/.pi/agent/bin" "$HOME/.local/bin"; do
+    case ":$PATH:" in
+      *":$d:"*) ;;
+      *) continue ;;
+    esac
+    [ -d "$d" ] || mkdir -p "$d" 2>/dev/null || continue
+    if ln -s "$SELF" "$d/miniflux" 2>/dev/null; then
+      echo "miniflux: linked $d/miniflux -> $SELF (now on PATH)" >&2
+      return 0
+    fi
+  done
+
+  echo "miniflux: not on PATH — link it manually once:" >&2
+  echo "  ln -s $SELF \$HOME/.pi/agent/bin/miniflux   # pi (dir must exist)" >&2
+  echo "  ln -s $SELF \$HOME/.local/bin/miniflux      # general" >&2
+  echo "  # or, for this session only:" >&2
+  echo "  export PATH=\"\$(dirname \"$SELF\"):\$PATH\"" >&2
+  return 0
+}
+
+maybe_link
+
 exec node "$DIR/src/index.ts" "$@"
