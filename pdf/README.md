@@ -55,9 +55,8 @@ pdf/
 │   └── openai.yaml       # OpenAI agent interface metadata
 ├── assets/
 │   └── pdf.png           # Icon
-└── LICENSE               # Apache-2.0
-```
+└── LICENSE               # GPL-3.0 (code)
 
 ## License
 
-[Apache-2.0](LICENSE)
+Code is [GPL-3.0](LICENSE); text is [CC BY-NC-SA 4.0](../LICENSE-CC-BY-NC-SA).

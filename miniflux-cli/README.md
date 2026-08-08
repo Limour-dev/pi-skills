@@ -69,11 +69,13 @@ Install the whole collection:
 npx skills add Limour-dev/pi-skills
 ```
 
-Or just this skill:
+Or just this skill (note: the installable skill *name* is `miniflux`, taken from the
+`name:` field in `SKILL.md`, not the repo directory name `miniflux-cli`):
 
 ```bash
-npx skills add Limour-dev/pi-skills --skill miniflux-cli
+npx skills add Limour-dev/pi-skills --skill miniflux
 ```
+
 
 ## Usage
 
@@ -101,4 +103,4 @@ npm test           # unit + end-to-end tests (node:test via tsx, no live server 
 
 ## License
 
-MIT
+Code is [GPL-3.0](../LICENSE); text is [CC BY-NC-SA 4.0](../LICENSE-CC-BY-NC-SA).

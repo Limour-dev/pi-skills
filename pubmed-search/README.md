@@ -66,4 +66,5 @@ npm run typecheck            # strict tsc --noEmit
 
 ## License
 
-Apache-2.0 (same as both the source repo and this pi-skills collection).
+Code is [GPL-3.0](../LICENSE); text is [CC BY-NC-SA 4.0](../LICENSE-CC-BY-NC-SA).
+The ported `pubmed.py` logic retains its original Apache-2.0 attribution in `src/pubmed.ts`.

@@ -29,4 +29,9 @@ npx skills add Limour-dev/pi-skills --skill pdf
 
 ## License
 
-[Apache-2.0](LICENSE)
+Dual-licensed:
+
+- **Code** (TypeScript, shell scripts, etc.) is licensed under the
+  [GNU GPL v3](LICENSE).
+- **Text** (documentation, `SKILL.md`, READMEs, references) is licensed under
+  [CC BY-NC-SA 4.0](LICENSE-CC-BY-NC-SA).
