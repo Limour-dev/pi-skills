@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# hn-briefing CLI wrapper — run the pure-TS HN client from anywhere.
+#
+#   hn-briefing top 100
+#   hn-briefing top --by-score 100
+#   hn-briefing item 49228663
+#   hn-briefing content https://example.com/article
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec node "$DIR/cli.ts" "$@"

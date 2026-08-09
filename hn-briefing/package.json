@@ -1,0 +1,21 @@
+{
+  "name": "hn-briefing",
+  "version": "1.0.0",
+  "description": "Zero-dependency, pure-TypeScript Hacker News CLI (top / item / content subcommands). Fetches front-page stories and extracts readable article text for building daily HN briefings; invoked from bash, no MCP server.",
+  "type": "module",
+  "bin": {
+    "hn-briefing": "bin/hn-briefing"
+  },
+  "scripts": {
+    "smoke": "bash scripts/smoke-test.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "keywords": ["hacker-news", "hn", "news", "briefing", "cli"],
+  "license": "GPL-3.0",
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}
