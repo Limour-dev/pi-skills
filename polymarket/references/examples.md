@@ -58,10 +58,10 @@ polymarket resolve "https://polymarket.com/event/will-the-us-confirm-that-aliens
   "classified": { "kind": "event-slug", "slug": "will-the-us-confirm-that-aliens-exist-before-2027" },
   "event": { "id": "90177", "title": "Will the US confirm that aliens exist by...?" },
   "candidates": [
-    { "index": 1, "id": "2009849", "question": "Will the US confirm that aliens exist by April 30?", "slug": "will-the-us-confirm-that-aliens-exist-by-april-30" },
-    { "index": 2, "id": "2034723", "question": "Will the US confirm that aliens exist by June 30?", "slug": "will-the-us-confirm-that-aliens-exist-by-june-30-333" }
+    { "index": 1, "id": "2009849", "question": "Will the US confirm that aliens exist by April 30?", "slug": "will-the-us-confirm-that-aliens-exist-by-april-30", "bestBid": null, "bestAsk": 0.001, "lastTradePrice": 0.001 },
+    { "index": 2, "id": "2034723", "question": "Will the US confirm that aliens exist by June 30?", "slug": "will-the-us-confirm-that-aliens-exist-by-june-30-333", "bestBid": 0.001, "bestAsk": 0.002, "lastTradePrice": 0.001 }
   ],
-  "hint": "re-run with --market <n|id|slug> to pick one"
+  "hint": "re-run with --market <n|id|slug>, or fetch every market with `polymarket event <slug>`"
 }
 ```
 
@@ -269,7 +269,7 @@ polymarket resolve 559651
     "id": "559651",
     "question": "Xi Jinping out before 2027?",
     "conditionId": "0xa467b1...",
-    "outcomes": [
+    "outcomeTokens": [
       { "outcome": "Yes", "tokenId": "323382...", "price": 0.0255 },
       { "outcome": "No",  "tokenId": "256593...", "price": 0.9745 }
     ],
@@ -281,3 +281,61 @@ polymarket resolve 559651
 
 Use it whenever you need a `tokenId` (to hand to a raw CLOB call) or a
 `conditionId` (for `/holders` and `/trades`).
+
+---
+
+## 11. What's hot, with a small payload
+
+Event-level 24-hour volume is only visible through the `events` listing. It
+defaults to open events; add a filter and a field projection to keep the output
+scannable:
+
+```bash
+polymarket events --open --order volume24hr --limit 3 \
+  --exclude-tag sports --min-liquidity 100000 \
+  --fields id,title,volume24hr,liquidity
+```
+
+```json
+{
+  "count": 3,
+  "events": [
+    { "id": "1103960", "title": "Indiana enacts data center moratorium by...?", "volume24hr": 2524815.6, "liquidity": 1756335.76 },
+    { "id": "45915",   "title": "Brazil Presidential Election",          "volume24hr": 1518578.21, "liquidity": 26674851.04 },
+    { "id": "1040303", "title": "Anthropic announces bankruptcy by...?",     "volume24hr": 1062168.23, "liquidity": 230993.12 }
+  ]
+}
+```
+
+`--fields`/`--brief` project each list item and keep `count`; `--exclude-tag`
+and `--min-liquidity` filter locally while paginating, so `--limit` counts
+matches. Without `--fields`, one full event is 60+ fields including a long
+`description` (and every nested market) — expensive to scan.
+
+An unknown `--order` field is rejected locally:
+
+```bash
+polymarket events --order nonexistentfield
+# error: unknown --order field "nonexistentfield" for events. Supported: id, volume, ...
+```
+
+---
+
+## 12. Multi-market events in one call
+
+`price <event>` refuses to guess and now lists candidates with live bid/ask:
+
+```bash
+polymarket price https://polymarket.com/event/will-the-us-confirm-that-aliens-exist-before-2027
+```
+
+To get every market's odds in a single call, fetch the event instead of pricing
+each market:
+
+```bash
+polymarket event will-the-us-confirm-that-aliens-exist-before-2027 \
+  --fields id,title,markets
+```
+
+`event.markets[].outcomeTokens[]` carries `{outcome, tokenId, price}` for every
+market, so a 20-market negRisk event needs one request, not twenty.

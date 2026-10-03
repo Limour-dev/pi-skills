@@ -32,10 +32,29 @@ run() {
   pass=$((pass + 1))
 }
 
+run_fail() {
+  local desc="$1"; shift
+  local out
+  if out="$("$CLI" "$@" 2>&1)"; then
+    echo "FAIL  $desc (expected non-zero exit)"
+    echo "      $out" | head -3
+    fail=$((fail + 1))
+    return
+  fi
+  echo "ok    $desc"
+  pass=$((pass + 1))
+}
+
 echo "== discovery =="
 run "search"                  search fed --limit 1
 run "events"                  events --limit 2
 run "events --tag"            events --tag politics --limit 2
+run "events --open --order"   events --open --order volume24hr --limit 2
+run "events --fields"         events --limit 2 --fields id,title,volume24hr
+run "events --brief"          events --limit 2 --brief
+run "events --exclude-tag"    events --exclude-tag sports --limit 2
+run "events --min-liquidity"  events --min-liquidity 1000 --limit 2
+run_fail "events bad --order" events --order bogusfield --limit 2
 run "event by slug"           event "$MARKET_SLUG"
 run "event by id"             event "$EVENT_ID"
 run "markets"                 markets --limit 2
@@ -48,6 +67,7 @@ run "comments"                comments "$MARKET_SLUG" --limit 1
 echo "== pricing =="
 run "price"                   price "$MARKET_SLUG"
 run "price --outcome"         price "$MARKET_SLUG" --outcome No
+run_fail "price extra arg"   price "$MARKET_SLUG" extra
 run "book --depth"            book "$MARKET_SLUG" --depth 2
 run "history"                 history "$MARKET_SLUG" --interval 1w
 run "clock"                   clock

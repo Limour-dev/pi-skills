@@ -130,7 +130,15 @@ async function resolveSlug(slug: string, marketSelector?: string): Promise<Resol
 /** Raised when an event URL/slug maps to more than one market and no selector was given. */
 export class AmbiguousEventError extends Error {
   event: Event;
-  choices: { index: number; id: string; question: string; slug: string | undefined }[];
+  choices: {
+    index: number;
+    id: string;
+    question: string;
+    slug: string | undefined;
+    bestBid: number | null;
+    bestAsk: number | null;
+    lastTradePrice: number | null;
+  }[];
 
   constructor(event: Event) {
     const markets = event.markets ?? [];
@@ -139,10 +147,16 @@ export class AmbiguousEventError extends Error {
       id: String(m.id),
       question: String(m.question ?? ""),
       slug: m.slug,
+      bestBid: m.bestBid != null ? Number(m.bestBid) : null,
+      bestAsk: m.bestAsk != null ? Number(m.bestAsk) : null,
+      lastTradePrice: m.lastTradePrice != null ? Number(m.lastTradePrice) : null,
     }));
-    const list = choices.map((c) => `  ${c.index}. ${c.question} (${c.slug ?? c.id})`).join("\n");
+    const price = (v: number | null) => (v == null ? "?" : String(v));
+    const list = choices
+      .map((c) => `  ${c.index}. ${c.question} — bid ${price(c.bestBid)} / ask ${price(c.bestAsk)} (${c.slug ?? c.id})`)
+      .join("\n");
     super(
-      `event "${event.slug ?? event.id}" has ${markets.length} markets — pick one with --market <n|id|slug>:\n${list}`
+      `event "${event.slug ?? event.id}" has ${markets.length} markets — pick one with --market <n|id|slug>:\n${list}\n  Or fetch every market at once: polymarket event ${event.slug ?? event.id}`
     );
     this.name = "AmbiguousEventError";
     this.event = event;

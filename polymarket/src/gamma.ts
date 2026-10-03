@@ -76,7 +76,63 @@ export type ListOptions = {
   tagId?: string;
   order?: string;
   ascending?: boolean;
+  /** Keep only rows matching this predicate. Applied while paginating so `limit` still counts matches. */
+  filter?: (row: Record<string, unknown>) => boolean;
 };
+
+/**
+ * Sort fields accepted by the Gamma listing endpoints. The API answers an
+ * unknown field with a generic 404, so the CLI validates locally to produce a
+ * useful error instead. Kept to fields verified against the live API.
+ */
+export const EVENT_ORDER_FIELDS = [
+  "id",
+  "volume",
+  "volume24hr",
+  "volume1wk",
+  "volume1mo",
+  "volume1yr",
+  "liquidity",
+  "openInterest",
+  "competitive",
+  "startDate",
+  "endDate",
+  "closedTime",
+  "createdAt",
+  "updatedAt",
+] as const;
+
+export const MARKET_ORDER_FIELDS = [
+  "id",
+  "question",
+  "slug",
+  "volume",
+  "volumeNum",
+  "volume24hr",
+  "volume1wk",
+  "volume1mo",
+  "volume1yr",
+  "liquidity",
+  "liquidityNum",
+  "openInterest",
+  "competitive",
+  "oneHourPriceChange",
+  "oneDayPriceChange",
+  "oneWeekPriceChange",
+  "oneMonthPriceChange",
+  "lastTradePrice",
+  "bestBid",
+  "bestAsk",
+  "spread",
+  "negRisk",
+  "active",
+  "closed",
+  "startDate",
+  "endDate",
+  "closedTime",
+  "createdAt",
+  "updatedAt",
+] as const;
 
 type KeysetResponse = { events?: Record<string, unknown>[]; markets?: Record<string, unknown>[]; next_cursor?: string };
 
@@ -84,10 +140,13 @@ async function keyset(
   resource: "events" | "markets",
   opts: ListOptions,
 ): Promise<Record<string, unknown>[]> {
-  const pageSize = Math.min(opts.limit ?? 20, 100);
+  const limit = opts.limit ?? 20;
+  const pageSize = Math.min(Math.max(limit, 20), 100);
   const out: Record<string, unknown>[] = [];
   let cursor: string | undefined;
+  let pages = 0;
   for (;;) {
+    if (++pages > (opts.all ? 1000 : 20)) break; // safety cap
     const url =
       `${GAMMA}/${resource}/keyset` +
       qs({
@@ -100,13 +159,19 @@ async function keyset(
       });
     const res = await getJson<KeysetResponse>(url);
     const rows = res[resource] ?? [];
-    out.push(...rows);
+    for (const row of rows) {
+      if (opts.filter && !opts.filter(row)) continue;
+      out.push(row);
+      if (out.length >= limit) break;
+    }
     cursor = res.next_cursor;
-    const done = !opts.all || !cursor || rows.length === 0;
-    if (done) break;
-    if (out.length >= (opts.limit ?? 20)) break;
+    if (!cursor || rows.length === 0) break;
+    if (out.length >= limit) break;
+    // Without --all or a local filter, one page is the contract; otherwise keep
+    // paging until `limit` matches so filters do not under-fill the result.
+    if (!opts.all && !opts.filter) break;
   }
-  return opts.all ? out : out.slice(0, opts.limit ?? 20);
+  return out.slice(0, limit);
 }
 
 export async function listEvents(opts: ListOptions = {}): Promise<Event[]> {
@@ -131,7 +196,8 @@ export async function listMarketsLegacy(opts: ListOptions = {}): Promise<Market[
       ascending: opts.ascending,
     });
   const rows = await getJson<Record<string, unknown>[]>(url);
-  return rows.map(normalizeMarket);
+  const markets = rows.map(normalizeMarket);
+  return opts.filter ? markets.filter((m) => opts.filter!(m as Record<string, unknown>)) : markets;
 }
 
 /** Look up markets by outcome token id(s) or condition id(s). */

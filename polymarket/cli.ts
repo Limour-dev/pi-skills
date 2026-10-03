@@ -20,6 +20,8 @@ import {
   listTags,
   resolveTagId,
   getPublicProfile,
+  EVENT_ORDER_FIELDS,
+  MARKET_ORDER_FIELDS,
   type Event,
   type Market,
 } from "./src/gamma.ts";
@@ -63,6 +65,7 @@ const BOOLEAN_FLAGS = new Set([
   "taker-only",
   "changes-only",
   "yes",
+  "brief",
 ]);
 
 function parseArgs(argv: string[]): Parsed {
@@ -115,8 +118,59 @@ function bool(f: Flags, ...keys: string[]): boolean {
   return keys.some((k) => f.get(k) === true || f.get(k) === "true");
 }
 
+const BRIEF_FIELDS = [
+  "id",
+  "title",
+  "question",
+  "slug",
+  "volume24hr",
+  "liquidity",
+  "bestBid",
+  "bestAsk",
+  "outcomeTokens",
+  "closed",
+  "endDate",
+];
+
+/** Pick only the requested top-level keys, leaving nested values untouched. */
+function pickFields(obj: Record<string, unknown>, fields: string[]): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const f of fields) if (f in obj) picked[f] = obj[f];
+  return picked;
+}
+
+/**
+ * Project `--fields` / `--brief` onto output. List envelopes look like
+ * `{ count, <key>: [...] }`: each item is projected while `count` is kept.
+ */
+function projectOutput(data: unknown, fields: string[]): unknown {
+  if (Array.isArray(data)) return data.map((d) => projectOutput(d, fields));
+  if (data === null || typeof data !== "object") return data;
+  const obj = data as Record<string, unknown>;
+  if (typeof obj.count === "number") {
+    const result: Record<string, unknown> = { count: obj.count };
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === "count") continue;
+      if (Array.isArray(v) && (v.length === 0 || (typeof v[0] === "object" && v[0] !== null))) {
+        result[k] = v.map((item) => projectOutput(item, fields));
+      } else if (fields.includes(k)) {
+        result[k] = v;
+      }
+    }
+    return result;
+  }
+  return pickFields(obj, fields);
+}
+
 function out(data: unknown, flags: Flags): void {
-  process.stdout.write(JSON.stringify(data, null, bool(flags, "raw") ? 0 : 2) + "\n");
+  const explicit = str(flags, "fields");
+  const selected = explicit
+    ? explicit.split(",").map((s) => s.trim()).filter(Boolean)
+    : bool(flags, "brief")
+      ? BRIEF_FIELDS
+      : undefined;
+  const payload = selected ? projectOutput(data, selected) : data;
+  process.stdout.write(JSON.stringify(payload, null, bool(flags, "raw") ? 0 : 2) + "\n");
 }
 
 // ------------------------------------------------------------------- commands
@@ -125,9 +179,11 @@ const USAGE = `polymarket — read-only Polymarket data
 
 Discovery (Gamma API)
   search <query>                     full-text search events/markets/profiles
-  events [--limit N] [--tag <id|slug>] [--all] [--closed] [--order <field>]
+  events [--limit N] [--tag <id|slug>] [--open|--closed|--all] [--order <field>]
+         [--exclude-tag <slug>] [--min-liquidity <n>]
   event <id|slug|url>                one event with its markets
-  markets [--limit N] [--tag <id|slug>] [--all] [--closed] [--order <field>]
+  markets [--limit N] [--tag <id|slug>] [--open|--closed|--all] [--order <field>]
+         [--exclude-tag <slug>] [--min-liquidity <n>]
   market <id|slug|url>               one market with outcomes + token ids
   tags [--search <text>] [--related <slug>] [--limit N]
   comments <id|slug|url> [--limit N]
@@ -154,7 +210,8 @@ Utilities
   resolve <anything>                 show canonical ids/tokens without fetching data
   help
 
-Global flags: --raw (compact JSON without data cleanup), --pretty, --market <n>
+Global flags: --raw, --pretty, --fields <a,b,c> (keep only these top-level fields),
+              --brief (preset small field set), --market <n>
 `;
 
 async function cmdSearch(p: Parsed): Promise<void> {
@@ -174,28 +231,84 @@ async function cmdSearch(p: Parsed): Promise<void> {
 }
 
 async function cmdEvents(p: Parsed): Promise<void> {
-  const opts = await listOpts(p);
+  const opts = await listOpts(p, { kind: "events", defaultOpen: true });
   const events = await listEvents(opts);
   out({ count: events.length, events: events.map(trimEvent) }, p.flags);
 }
 
 async function cmdMarkets(p: Parsed): Promise<void> {
-  const opts = await listOpts(p);
+  const opts = await listOpts(p, { kind: "markets", defaultOpen: true });
   const order = str(p.flags, "order");
   const markets = order ? await listMarketsLegacy(opts) : await listMarkets(opts);
   out({ count: markets.length, markets: markets.map(trimMarket) }, p.flags);
 }
 
-async function listOpts(p: Parsed) {
+function validateOrder(kind: "events" | "markets", order: string): void {
+  const allowed: readonly string[] = kind === "events" ? EVENT_ORDER_FIELDS : MARKET_ORDER_FIELDS;
+  if (!allowed.includes(order)) {
+    throw new Error(`unknown --order field "${order}" for ${kind}. Supported: ${allowed.join(", ")}`);
+  }
+}
+
+function firstRef(p: Parsed, usage: string): string {
+  if (p.positional.length === 0) throw new Error(`usage: ${usage}`);
+  if (p.positional.length > 1) throw new Error(`unexpected argument "${p.positional[1]}" (usage: ${usage})`);
+  return p.positional[0];
+}
+
+/** Local filters for fields the listing APIs do not expose (or that combine poorly with sorting). */
+function buildFilter(opts: {
+  excludeTagIds?: string[];
+  excludeTagSlugs?: string[];
+  minLiquidity?: number;
+}): ((row: Record<string, unknown>) => boolean) | undefined {
+  const { excludeTagIds, excludeTagSlugs, minLiquidity } = opts;
+  if (!excludeTagIds?.length && !excludeTagSlugs?.length && minLiquidity === undefined) return undefined;
+  return (row) => {
+    if (minLiquidity !== undefined) {
+      const liq = Number((row.liquidityNum ?? row.liquidity) ?? 0);
+      if (!(liq >= minLiquidity)) return false;
+    }
+    if (excludeTagIds?.length || excludeTagSlugs?.length) {
+      const tags = Array.isArray(row.tags) ? (row.tags as Record<string, unknown>[]) : [];
+      const ids = new Set(tags.map((t) => String(t.id ?? "")));
+      const slugs = new Set(tags.map((t) => String(t.slug ?? "")));
+      if (excludeTagIds?.some((id) => ids.has(id))) return false;
+      if (excludeTagSlugs?.some((slug) => slug && slugs.has(slug))) return false;
+    }
+    return true;
+  };
+}
+
+async function listOpts(p: Parsed, opts: { kind: "events" | "markets"; defaultOpen?: boolean }) {
+  const order = str(p.flags, "order");
+  if (order) validateOrder(opts.kind, order);
   const tag = str(p.flags, "tag");
+
+  // Events/markets default to open; `--all` restores the all-states listing.
+  const closedFlag = bool(p.flags, "closed");
+  const openFlag = bool(p.flags, "open");
+  const allStates = bool(p.flags, "all");
+  let closed: boolean | undefined;
+  if (closedFlag) closed = true;
+  else if (openFlag) closed = false;
+  else if (allStates) closed = undefined;
+  else if (opts.defaultOpen) closed = false;
+
+  const excludeTag = str(p.flags, "exclude-tag");
+  const excludeTagSlugs = excludeTag?.split(",").map((s) => s.trim()).filter(Boolean);
+  const excludeTagIds = excludeTagSlugs ? await Promise.all(excludeTagSlugs.map((s) => resolveTagId(s))) : undefined;
+  const minLiquidity = str(p.flags, "min-liquidity") !== undefined ? num(p.flags, "min-liquidity", 0) : undefined;
+
   return {
     limit: num(p.flags, "limit", 20),
-    all: bool(p.flags, "all"),
-    closed: bool(p.flags, "closed") ? true : bool(p.flags, "open") ? false : undefined,
+    all: allStates,
+    closed,
     // The listing endpoints only accept a numeric tag id, so a slug is resolved first.
     tagId: tag ? await resolveTagId(tag) : undefined,
-    order: str(p.flags, "order"),
+    order,
     ascending: bool(p.flags, "asc"),
+    filter: buildFilter({ excludeTagIds, excludeTagSlugs, minLiquidity }),
   };
 }
 
@@ -206,7 +319,9 @@ function trimMarket(m: Market): Record<string, unknown> {
     question: m.question,
     slug: m.slug,
     conditionId: m.conditionId,
-    outcomes: m.outcomeTokens,
+    outcomeTokens: m.outcomeTokens,
+    bestBid: m.bestBid,
+    bestAsk: m.bestAsk,
     volume: m.volumeNum ?? m.volume,
     liquidity: m.liquidityNum ?? m.liquidity,
     volume24hr: m.volume24hr,
@@ -232,14 +347,15 @@ function trimEvent(e: Event): Record<string, unknown> {
       id: m.id,
       question: m.question,
       slug: m.slug,
-      outcomes: m.outcomeTokens,
+      outcomeTokens: m.outcomeTokens,
+      bestBid: m.bestBid,
+      bestAsk: m.bestAsk,
     })),
   };
 }
 
 async function cmdEvent(p: Parsed): Promise<void> {
-  const ref = p.positional[0];
-  if (!ref) throw new Error("usage: polymarket event <id|slug|url>");
+  const ref = firstRef(p, "polymarket event <id|slug|url>");
   const event = await resolveEventWithFallback(ref);
   out(event, p.flags);
 }
@@ -268,8 +384,7 @@ async function resolveEventWithFallback(ref: string): Promise<Event> {
 }
 
 async function cmdMarket(p: Parsed): Promise<void> {
-  const ref = p.positional[0];
-  if (!ref) throw new Error("usage: polymarket market <id|slug|url>");
+  const ref = firstRef(p, "polymarket market <id|slug|url>");
   const { market, event } = await resolveMarket(ref, { market: str(p.flags, "market") });
   out(
     {
@@ -281,8 +396,7 @@ async function cmdMarket(p: Parsed): Promise<void> {
 }
 
 async function cmdPrice(p: Parsed): Promise<void> {
-  const ref = p.positional[0];
-  if (!ref) throw new Error("usage: polymarket price <id|slug|url>");
+  const ref = firstRef(p, "polymarket price <id|slug|url> [--outcome Yes|No|N]");
   const t = await resolveToken(ref, {
     outcome: str(p.flags, "outcome"),
     market: str(p.flags, "market"),
@@ -302,8 +416,7 @@ async function cmdPrice(p: Parsed): Promise<void> {
 }
 
 async function cmdBook(p: Parsed): Promise<void> {
-  const ref = p.positional[0];
-  if (!ref) throw new Error("usage: polymarket book <id|slug|url>");
+  const ref = firstRef(p, "polymarket book <id|slug|url> [--depth N]");
   const t = await resolveToken(ref, {
     outcome: str(p.flags, "outcome"),
     market: str(p.flags, "market"),
@@ -335,8 +448,7 @@ async function cmdBook(p: Parsed): Promise<void> {
 }
 
 async function cmdHistory(p: Parsed): Promise<void> {
-  const ref = p.positional[0];
-  if (!ref) throw new Error("usage: polymarket history <id|slug|url>");
+  const ref = firstRef(p, "polymarket history <id|slug|url> [--interval 1w]");
   const t = await resolveToken(ref, {
     outcome: str(p.flags, "outcome"),
     market: str(p.flags, "market"),
@@ -381,8 +493,7 @@ async function cmdTrades(p: Parsed): Promise<void> {
 }
 
 async function cmdHolders(p: Parsed): Promise<void> {
-  const ref = p.positional[0];
-  if (!ref) throw new Error("usage: polymarket holders <id|slug|url>");
+  const ref = firstRef(p, "polymarket holders <id|slug|url>");
   const { market } = await resolveMarket(ref, { market: str(p.flags, "market") });
   if (!market.conditionId) throw new Error(`market ${market.id} has no conditionId`);
   const groups = await getHolders({ market: market.conditionId, limit: num(p.flags, "limit", 20) });
@@ -390,8 +501,7 @@ async function cmdHolders(p: Parsed): Promise<void> {
 }
 
 async function cmdPositions(p: Parsed, closed = false): Promise<void> {
-  const user = p.positional[0];
-  if (!user) throw new Error(`usage: polymarket ${closed ? "closed-positions" : "positions"} <address>`);
+  const user = firstRef(p, `polymarket ${closed ? "closed-positions" : "positions"} <address>`);
   const limit = num(p.flags, "limit", 50);
   const rows = closed
     ? await getClosedPositions({ user, limit })
@@ -400,8 +510,7 @@ async function cmdPositions(p: Parsed, closed = false): Promise<void> {
 }
 
 async function cmdActivity(p: Parsed): Promise<void> {
-  const user = p.positional[0];
-  if (!user) throw new Error("usage: polymarket activity <address>");
+  const user = firstRef(p, "polymarket activity <address>");
   const rows = await getActivity({ user, limit: num(p.flags, "limit", 50), type: str(p.flags, "type") });
   out({ user, count: rows.length, activity: rows }, p.flags);
 }
@@ -428,8 +537,7 @@ async function cmdTags(p: Parsed): Promise<void> {
 }
 
 async function cmdComments(p: Parsed): Promise<void> {
-  const ref = p.positional[0];
-  if (!ref) throw new Error("usage: polymarket comments <id|slug|url>");
+  const ref = firstRef(p, "polymarket comments <id|slug|url>");
   // Live API: parent_entity_type is Event-only (docs also list `market`, but it 422s).
   const event = await resolveEventWithFallback(ref);
   const res = await getComments({
@@ -476,8 +584,7 @@ async function cmdWatch(p: Parsed): Promise<void> {
 }
 
 async function cmdResolve(p: Parsed): Promise<void> {
-  const ref = p.positional[0];
-  if (!ref) throw new Error("usage: polymarket resolve <anything>");
+  const ref = firstRef(p, "polymarket resolve <anything>");
   const c = classify(ref);
   const result: Record<string, unknown> = { input: ref, classified: c };
   try {
@@ -487,7 +594,7 @@ async function cmdResolve(p: Parsed): Promise<void> {
       question: market.question,
       slug: market.slug,
       conditionId: market.conditionId,
-      outcomes: market.outcomeTokens,
+      outcomeTokens: market.outcomeTokens,
       active: market.active,
       closed: market.closed,
       endDate: market.endDate,
@@ -502,7 +609,7 @@ async function cmdResolve(p: Parsed): Promise<void> {
     if (e instanceof AmbiguousEventError) {
       result.event = { id: e.event.id, title: e.event.title, slug: e.event.slug };
       result.candidates = e.choices;
-      result.hint = "re-run with --market <n|id|slug> to pick one";
+      result.hint = "re-run with --market <n|id|slug>, or fetch every market with `polymarket event <slug>`";
       delete result.error;
     }
   }
