@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# polymarket CLI wrapper — run the pure-TS Polymarket client from anywhere.
+#
+#   polymarket search "fed rate cut"
+#   polymarket price xi-jinping-out-before-2027
+#   polymarket book https://polymarket.com/market/xi-jinping-out-before-2027
+#   polymarket watch xi-jinping-out-before-2027 --duration 30
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec node "$DIR/cli.ts" "$@"

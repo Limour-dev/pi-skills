@@ -1,0 +1,34 @@
+{
+  "name": "polymarket",
+  "version": "1.0.0",
+  "description": "Zero-dependency, pure-TypeScript read-only CLI for Polymarket (Gamma / CLOB / Data APIs + public market WebSocket). Resolve any market id, slug, or polymarket.com URL to prices, order books, history, positions, holders, and trade feeds — no auth, no SDK, no npm install.",
+  "type": "module",
+  "bin": {
+    "polymarket": "bin/polymarket"
+  },
+  "files": [
+    "bin",
+    "src",
+    "cli.ts"
+  ],
+  "scripts": {
+    "smoke": "bash scripts/smoke-test.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "keywords": [
+    "polymarket",
+    "prediction-market",
+    "clob",
+    "gamma",
+    "cli"
+  ],
+  "license": "GPL-3.0",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.5.4"
+  }
+}
