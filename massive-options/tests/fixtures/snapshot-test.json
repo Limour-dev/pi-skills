@@ -1,0 +1,91 @@
+{
+  "status": "OK",
+  "request_id": "fixture-0001",
+  "results": [
+    {
+      "details": { "ticker": "O:TEST261009C00095000", "contract_type": "call", "expiration_date": "2026-10-09", "strike_price": 95, "shares_per_contract": 100 },
+      "greeks": { "delta": 0.72, "gamma": 0.02, "theta": -0.04, "vega": 0.11 },
+      "implied_volatility": 0.28,
+      "open_interest": 100,
+      "day": { "volume": 120, "close": 6.4, "previous_close": 6.1 },
+      "last_quote": { "bid": 6.3, "ask": 6.5, "midpoint": 6.4, "last_updated": 1790951880000000000, "timeframe": "DELAYED" },
+      "last_trade": { "price": 6.4, "size": 3, "sip_timestamp": 1790951800000000000 },
+      "break_even_price": 101.4,
+      "underlying_asset": { "price": 100, "ticker": "TEST", "timeframe": "DELAYED", "last_updated": 1790951880000000000 }
+    },
+    {
+      "details": { "ticker": "O:TEST261009C00100000", "contract_type": "call", "expiration_date": "2026-10-09", "strike_price": 100, "shares_per_contract": 100 },
+      "greeks": { "delta": 0.55, "gamma": 0.06, "theta": -0.05, "vega": 0.13 },
+      "implied_volatility": 0.3,
+      "open_interest": 200,
+      "day": { "volume": 480, "close": 3.9 },
+      "last_quote": { "bid": 3.85, "ask": 3.95, "midpoint": 3.9, "last_updated": 1790951880000000000, "timeframe": "DELAYED" },
+      "last_trade": { "price": 3.9, "size": 12, "sip_timestamp": 1790951850000000000 },
+      "break_even_price": 103.9,
+      "underlying_asset": { "price": 100, "ticker": "TEST", "timeframe": "DELAYED" }
+    },
+    {
+      "details": { "ticker": "O:TEST261009C00105000", "contract_type": "call", "expiration_date": "2026-10-09", "strike_price": 105, "shares_per_contract": 100 },
+      "greeks": { "delta": 0.31, "gamma": 0.01, "theta": -0.04, "vega": 0.09 },
+      "implied_volatility": 0.31,
+      "open_interest": 50,
+      "day": { "volume": 60, "close": 1.8 },
+      "last_quote": { "bid": 1.75, "ask": 1.85, "midpoint": 1.8, "timeframe": "DELAYED" },
+      "underlying_asset": { "price": 100, "ticker": "TEST", "timeframe": "DELAYED" }
+    },
+    {
+      "details": { "ticker": "O:TEST261009P00095000", "contract_type": "put", "expiration_date": "2026-10-09", "strike_price": 95, "shares_per_contract": 100 },
+      "greeks": { "delta": -0.28, "gamma": 0.01, "theta": -0.03, "vega": 0.07 },
+      "implied_volatility": 0.33,
+      "open_interest": 300,
+      "day": { "volume": 200, "close": 0.9 },
+      "last_quote": { "bid": 0.85, "ask": 0.95, "midpoint": 0.9, "timeframe": "DELAYED" },
+      "underlying_asset": { "price": 100, "ticker": "TEST", "timeframe": "DELAYED" }
+    },
+    {
+      "details": { "ticker": "O:TEST261009P00100000", "contract_type": "put", "expiration_date": "2026-10-09", "strike_price": 100, "shares_per_contract": 100 },
+      "greeks": { "delta": -0.45, "gamma": 0.04, "theta": -0.05, "vega": 0.12 },
+      "implied_volatility": 0.29,
+      "open_interest": 250,
+      "day": { "volume": 330, "close": 2.6 },
+      "last_quote": { "bid": 2.55, "ask": 2.65, "midpoint": 2.6, "timeframe": "DELAYED" },
+      "underlying_asset": { "price": 100, "ticker": "TEST", "timeframe": "DELAYED" }
+    },
+    {
+      "details": { "ticker": "O:TEST261009P00105000", "contract_type": "put", "expiration_date": "2026-10-09", "strike_price": 105, "shares_per_contract": 100 },
+      "greeks": { "delta": -0.69, "gamma": 0.005, "theta": -0.04, "vega": 0.08 },
+      "implied_volatility": 0.3,
+      "open_interest": 20,
+      "day": { "volume": 25, "close": 6.2 },
+      "last_quote": { "bid": 6.1, "ask": 6.3, "midpoint": 6.2, "timeframe": "DELAYED" },
+      "underlying_asset": { "price": 100, "ticker": "TEST", "timeframe": "DELAYED" }
+    },
+    {
+      "details": { "ticker": "O:TEST261120C00100000", "contract_type": "call", "expiration_date": "2026-11-20", "strike_price": 100, "shares_per_contract": 100 },
+      "greeks": { "delta": 0.58, "gamma": 0.03, "theta": -0.02, "vega": 0.2 },
+      "implied_volatility": 0.26,
+      "open_interest": 10,
+      "day": { "volume": 4, "close": 5.5 },
+      "last_quote": { "bid": 5.4, "ask": 5.6, "midpoint": 5.5, "timeframe": "DELAYED" },
+      "underlying_asset": { "price": 100, "ticker": "TEST", "timeframe": "DELAYED" }
+    },
+    {
+      "details": { "ticker": "O:TEST261120C00110000", "contract_type": "call", "expiration_date": "2026-11-20", "strike_price": 110, "shares_per_contract": 100 },
+      "greeks": { "delta": 0.34, "gamma": 0.02, "theta": -0.02, "vega": 0.17 },
+      "implied_volatility": 0.27,
+      "open_interest": 5,
+      "day": { "volume": 1, "close": 3.0 },
+      "last_quote": { "bid": 2.9, "ask": 3.1, "midpoint": 3.0, "timeframe": "DELAYED" },
+      "underlying_asset": { "price": 100, "ticker": "TEST", "timeframe": "DELAYED" }
+    },
+    {
+      "details": { "ticker": "O:TEST261120P00100000", "contract_type": "put", "expiration_date": "2026-11-20", "strike_price": 100, "shares_per_contract": 100 },
+      "greeks": { "delta": -0.42, "gamma": 0.02, "theta": -0.02, "vega": 0.16 },
+      "implied_volatility": 0.28,
+      "open_interest": 50,
+      "day": { "volume": 6, "close": 5.9 },
+      "last_quote": { "bid": 5.8, "ask": 6.0, "midpoint": 5.9, "timeframe": "DELAYED" },
+      "underlying_asset": { "price": 100, "ticker": "TEST", "timeframe": "DELAYED" }
+    }
+  ]
+}

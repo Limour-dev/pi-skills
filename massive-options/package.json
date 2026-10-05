@@ -1,0 +1,38 @@
+{
+  "name": "massive-options",
+  "version": "1.0.0",
+  "description": "Zero-dependency, pure-TypeScript CLI for short-dated option gamma exposure (GEX) and max pain from the Massive REST API. Discovers ~1-week expirations, pages the option chain snapshot (open interest + greeks), and reports GEX by strike/expiry, gamma-flip levels, call/put walls and max-pain strikes.",
+  "type": "module",
+  "bin": {
+    "massive-options": "bin/massive-options"
+  },
+  "files": [
+    "bin",
+    "src",
+    "cli.ts",
+    "references"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.ts",
+    "smoke": "bash scripts/smoke-test.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "keywords": [
+    "options",
+    "gex",
+    "gamma-exposure",
+    "max-pain",
+    "open-interest",
+    "massive",
+    "polygon",
+    "cli"
+  ],
+  "license": "GPL-3.0",
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

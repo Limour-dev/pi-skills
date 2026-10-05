@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# massive-options CLI wrapper — run the pure-TS Massive options client from anywhere.
+#
+#   massive-options gex SPY --dte 7 --format table
+#   massive-options max-pain SPY --expiries 2026-10-09
+#   massive-options chain QQQ --dte 2 --strike-range 0.1
+#   massive-options probe
+#
+# Config: MASSIVE_API_KEY (or POLY_API_KEY / --api-key) and optionally MASSIVE_BASE_URL.
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec node "$DIR/cli.ts" "$@"
