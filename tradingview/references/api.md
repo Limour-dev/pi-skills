@@ -42,7 +42,7 @@ code (see `src/output.ts`).
 | --- | --- | --- |
 | `INVALID_ARGUMENT` | Bad query, checked before connecting | 2 |
 | `SYMBOL_ERROR` / `NO_DATA` / `NOT_FOUND` | Unknown symbol / empty range | 3 |
-| `SERIES_ERROR` | Resolution/permission refusal (seconds, 360/480/720 minutes, …) | 4 |
+| `SERIES_ERROR` | Server-side resolution/permission refusal (e.g. a paid-only resolution) | 4 |
 | `TIMEOUT` / `ABORTED` | Didn't answer in time / cancelled | 5 |
 | `DISCONNECTED` / `CONNECTION_ERROR` / `HTTP_ERROR` / `PROTOCOL_ERROR` / `PARSE_ERROR` | Transport / decoding | 6 |
 | `CRITICAL_ERROR` / `CALLBACK_ERROR` | Command refused | 1 |
@@ -117,8 +117,9 @@ are filtered with `isBarFinished` (`src/util.ts`) before being written.
 1h 2h 3h 4h 1d 1w 1mo` aliases. The list lives in one place — `TIMEFRAMES` /
 `TIMEFRAME_HELP` in `src/util.ts` — and feeds the help text, the parse error and
 `references/commands.md`. `360` / `480` / `720` minutes and seconds (`1S`) are
-**not** accepted: an anonymous session answers `SERIES_ERROR`
-(`custom_resolution` / `seconds_not_entitled`, exit 4). Upstream also knows
+**not** accepted: the CLI rejects them locally as a `USAGE` error (exit 2),
+before any network call. `SERIES_ERROR` (exit 4) is only for a resolution the
+*server* refuses (e.g. one that needs a paid account). Upstream also knows
 `3M 6M 12M`, which the CLI does not expose.
 
 Candle `time` is the bar **open** time in Unix **seconds**; the CLI adds

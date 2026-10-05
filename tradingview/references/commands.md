@@ -42,9 +42,11 @@ See `../SKILL.md` for exit codes.
 
 The `--tf` list above is generated from `TIMEFRAMES` in `src/util.ts`; the same
 constant feeds the help text and the parse error, so they cannot disagree.
-`360` / `480` / `720` minutes and seconds (`1S`) are **not** accepted: an
-anonymous session answers `SERIES_ERROR` for them (exit 4), and they may still
-require a paid account.
+`360` / `480` / `720` minutes and seconds (`1S`) are **not** accepted. They never
+reach the server: the CLI rejects them locally as a `USAGE` error (**exit 2**),
+regardless of the account. A `SERIES_ERROR` (**exit 4**) is a different, purely
+server-side refusal of a resolution the CLI did pass through — typically one that
+needs a paid account. So a local bad `--tf` is exit 2, not exit 4.
 
 Flag parsing: `--name value` or `--name=value`. Boolean flags never consume the
 next token, so `candles --quiet BTCUSD` keeps `BTCUSD` positional. Unknown flags
@@ -80,7 +82,9 @@ silently fall back to `--count 100`.
 - `time` is the bar **open** time in Unix **seconds**; `time_iso` is UTC.
 - `resolved_from` is `explicit` / `alias` / `search`.
 - `symbol_kind` / `unit` describe what the numbers mean; see `symbols.md`.
-- `volume_reliable: false` marks derived indices, and their `volume` is `null`.
+- `volume_reliable: false` marks derived indices, and their `volume` is `null`;
+  `csv` renders that as `null` and `table`/`md` as `-`, so an absent volume is never
+  mistaken for a blank/parse-failed cell.
 - `coverage` is the first/last returned bar; `candles` is oldest-first unless
   `--newest-first`.
 - `as_of` is when the response was generated; `last_bar_age` is seconds since the
@@ -107,6 +111,7 @@ Same envelope, plus:
   "warmup_bars": 300,
   "series": [
     { "time": 1790985600, "time_iso": "2026-10-03T00:00:00.000Z",
+      "open": 0, "high": 0, "low": 0, "close": 0, "volume": 0,
       "kc1_mid": 0, "kc1_upper": 0, "kc1_lower": 0,
       "ema_high": 0, "ema_low": 0,
       "kc2_mid": 0, "kc2_upper": 0, "kc2_lower": 0,
@@ -125,6 +130,11 @@ This is the **only** indicator set the skill computes; see `../SKILL.md` for the
 Pine formulas. Values before an indicator's warmup window are `null`; the
 default `--warmup 300` makes the returned window fully warmed up.
 
+Each `series[]` element also carries the bar's `open/high/low/close/volume`, so one
+call returns price **and** indicators with no join against `candles`. Pull them in
+with `--select`, e.g. `--select time_iso,close,kc1_lower,macd_hist`; the default
+`csv`/`table` columns above stay indicator-only.
+
 ### `--select`
 
 `--select` trims the row array only:
@@ -132,14 +142,26 @@ default `--warmup 300` makes the returned window fully warmed up.
 - `csv`/`table`/`md`: the header is exactly the selected fields — no empty columns;
 - `json`: the top level stays an object (`symbol`, `coverage`, `cache`, `warnings`
   keep their place), and only the elements of `candles[]` / `series[]` are narrowed;
-- an unknown field warns on stderr and is dropped; if nothing matches, or
-  `--strict` is set, the command exits 2.
+- an unknown field warns on stderr and is dropped; the JSON envelope also gets a
+  `warnings: ["--select dropped unknown field(s): …"]` entry, so a caller that only
+  reads stdout still notices (`--quiet` silences stderr only). If nothing matches, or
+  `--strict` is set, the command exits 2;
+- the warning points across commands — price fields live in `candles`, indicator
+  fields in `indicators` — and suggests the nearest field for a typo.
 
 ```console
 $ tradingview candles BTCUSD --tf 1D --count 2 --select time_iso,close --format csv
 time_iso,close
 2026-10-03T00:00:00.000Z,84746.87
 2026-10-04T00:00:00.000Z,86510.16
+```
+
+```console
+$ tradingview indicators USDT.D --tf 1D --count 2 \
+    --select time_iso,close,kc1_lower,macd_hist --format csv
+time_iso,close,kc1_lower,macd_hist
+2026-10-03T00:00:00.000Z,6.42,6.61,0.03
+2026-10-04T00:00:00.000Z,6.32,6.39,0.05
 ```
 
 ## Closed bars only

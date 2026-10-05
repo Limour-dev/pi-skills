@@ -125,3 +125,19 @@ test("the 大道至简 set warms up exactly like the Pine script", () => {
 test("warmup covers the longest indicator window", () => {
   assert.equal(warmupBars(), 300);
 });
+
+test("the indicator rows carry the input bar's OHLCV", () => {
+  const candles = [
+    { time: 0, open: 10, high: 12, low: 9, close: 11, volume: 100 },
+    { time: 86_400, open: 11, high: 13, low: 10, close: 12 },
+  ];
+  const points = computeDadaoZhiJian(candles);
+  assert.equal(points.length, 2);
+  assert.deepEqual(
+    points.map(({ open, high, low, close, volume }) => ({ open, high, low, close, volume })),
+    [
+      { open: 10, high: 12, low: 9, close: 11, volume: 100 },
+      { open: 11, high: 13, low: 10, close: 12, volume: null },
+    ],
+  );
+});

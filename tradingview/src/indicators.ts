@@ -242,6 +242,17 @@ export function warmupBars(params: DadaoZhiJianParams = DADAO_ZHIJIAN_PARAMS): n
 }
 
 export type IndicatorPoint = {
+  /**
+   * The input bar's OHLCV, carried through unchanged so a caller can read price
+   * and indicators from one `indicators` row instead of joining `candles`.
+   * These are reachable via `--select`; the default indicator columns do not
+   * include them, which keeps existing csv/table consumers stable.
+   */
+  open: Numeric;
+  high: Numeric;
+  low: Numeric;
+  close: Numeric;
+  volume: Numeric;
   time: number;
   /** `ta.kc(close, 50, 2.75)` */
   kc1_mid: Numeric;
@@ -285,6 +296,11 @@ export function computeDadaoZhiJian(
 
   return candles.map((candle, i) => ({
     time: candle.time,
+    open: isNum(candle.open) ? candle.open : null,
+    high: isNum(candle.high) ? candle.high : null,
+    low: isNum(candle.low) ? candle.low : null,
+    close: isNum(candle.close) ? candle.close : null,
+    volume: isNum(candle.volume) ? candle.volume : null,
     kc1_mid: kc1.basis[i],
     kc1_upper: kc1.upper[i],
     kc1_lower: kc1.lower[i],

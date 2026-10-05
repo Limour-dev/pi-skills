@@ -1,6 +1,6 @@
 {
   "name": "tradingview",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Read-only TradingView OHLCV candle + 大道至简 indicator CLI on top of @mathieuc/tradingview v4, with a local SQLite cache: reads cached history, fetches only the missing older/newer bars, and stores new closed bars back. Bare names like USDT.D, US10Y, CNH1!, BTCUSD resolve automatically with unit/symbol_kind metadata. Only closed bars — the in-progress bar is never fetched.",
   "type": "module",
   "bin": {

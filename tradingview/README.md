@@ -136,8 +136,9 @@ npm run smoke        # live candle requests; needs network
 - **Read-only.** No orders, no watchlist edits, no chart changes.
 - Anonymous access works; intraday history is shorter than with account cookies,
   and deep `--from` ranges may be truncated by the server.
-- `SERIES_ERROR` (exit 4) means the timeframe needs a paid account — retry with
-  `--tf 240` or `--tf D`.
+- An unsupported `--tf` (e.g. `360`, `1S`) is a local `USAGE` error — **exit 2**.
+  `SERIES_ERROR` (**exit 4**) is different: the *server* refused a resolution that
+  needs a paid account.
 - Not affiliated with or endorsed by TradingView. Respect your data provider's
   terms and market-data permissions.
 - Code is GPL-3.0; documentation is CC BY-NC-SA 4.0 — same as the parent

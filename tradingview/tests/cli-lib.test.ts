@@ -8,8 +8,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { parseArgs, unknownFlags } from "../src/args.ts";
-import { columnsOf } from "../src/output.ts";
-import { knownFields, planSelect, projectRow } from "../src/select.ts";
+import { columnsOf, renderCsv, renderTable } from "../src/output.ts";
+import { PRICE_FIELDS, editDistance, knownFields, nearestField, planSelect, projectRow } from "../src/select.ts";
 import { resolutionNote, symbolMeta } from "../src/symbols.ts";
 import { TIMEFRAME_HELP, TIMEFRAMES, normalizeTimeframe } from "../src/util.ts";
 
@@ -123,4 +123,27 @@ test("resolving to a derived index produces an explicit note", () => {
     }),
     null,
   );
+});
+
+test("nearestField points a typo at the closest known field", () => {
+  assert.equal(editDistance("time_isoo", "time_iso"), 1);
+  assert.equal(nearestField("time_isoo", ["time_iso", "close"]), "time_iso");
+  assert.equal(nearestField("kc1_mdi", ["time_iso", "kc1_mid", "kc1_upper"]), "kc1_mid");
+  // Unrelated names must not get a misleading suggestion.
+  assert.equal(nearestField("totally_other", ["time_iso", "close"]), null);
+  assert.ok(PRICE_FIELDS.has("close"));
+});
+
+test("price fields are selectable alongside indicators", () => {
+  const known = ["time_iso", "open", "high", "low", "close", "volume", "kc1_mid", "macd_hist"];
+  const plan = planSelect(["time_iso", "close", "kc1_mid", "macd_hist"], known);
+  assert.deepEqual(plan.unknown, []);
+  assert.deepEqual(plan.effective, ["time_iso", "close", "kc1_mid", "macd_hist"]);
+});
+
+test("tabular output renders null explicitly, not as a blank", () => {
+  const rows = [{ time_iso: "2026-10-03T00:00:00.000Z", close: 1, volume: null }];
+  const cols = ["time_iso", "close", "volume"];
+  assert.equal(renderCsv(rows, cols), "time_iso,close,volume\n2026-10-03T00:00:00.000Z,1,null");
+  assert.match(renderTable(rows, cols), /1\s+-\s*$/m);
 });

@@ -110,7 +110,7 @@ function tvHint(code: string): string | undefined {
     case "NO_DATA":
       return "No closed bars in the requested range. Widen the range or lower --count.";
     case "SERIES_ERROR":
-      return "The server refused this series, usually because the timeframe needs a paid account (seconds, or 360/480/720 minutes). Retry with --tf 240 or --tf D; see references/commands.md for the supported list.";
+      return "The server refused this series, usually because the resolution needs a paid account (for example seconds). Retry with --tf 240 or --tf D; see references/commands.md for the supported list.";
     case "TIMEOUT":
       return "Raise --timeout, or retry: the TradingView websocket did not answer in time.";
     case "CONNECTION_ERROR":
@@ -133,15 +133,18 @@ export function detectFormat(f: Flags): Format {
   return "json";
 }
 
-function scalar(v: unknown): string {
-  if (v === null || v === undefined) return "";
+function scalar(v: unknown, nullText = ""): string {
+  // A JSON `null` (unreliable volume, an indicator still warming up) must be
+  // distinguishable from a missing field, so tabular formats render it
+  // explicitly instead of as a blank cell.
+  if (v === null || v === undefined) return nullText;
   if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(Number(v.toFixed(8)));
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
 }
 
-function csvCell(v: unknown): string {
-  const s = scalar(v);
+function csvCell(v: unknown, nullText = ""): string {
+  const s = scalar(v, nullText);
   return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 
@@ -187,26 +190,26 @@ export function columnsOf(rows: Record<string, unknown>[], explicit?: string[]):
   return seen;
 }
 
-function renderCsv(rows: Record<string, unknown>[], explicit?: string[]): string {
+export function renderCsv(rows: Record<string, unknown>[], explicit?: string[]): string {
   const cols = columnsOf(rows, explicit);
   const lines = [cols.join(",")];
-  for (const row of rows) lines.push(cols.map((c) => csvCell(row[c])).join(","));
+  for (const row of rows) lines.push(cols.map((c) => csvCell(row[c], "null")).join(","));
   return lines.join("\n");
 }
 
-function renderMd(rows: Record<string, unknown>[], explicit?: string[]): string {
+export function renderMd(rows: Record<string, unknown>[], explicit?: string[]): string {
   const cols = columnsOf(rows, explicit);
   const head = `| ${cols.join(" | ")} |`;
   const sep = `| ${cols.map(() => "---").join(" | ")} |`;
-  const body = rows.map((row) => `| ${cols.map((c) => scalar(row[c]).replaceAll("|", "\\|")).join(" | ")} |`);
+  const body = rows.map((row) => `| ${cols.map((c) => scalar(row[c], "-").replaceAll("|", "\\|")).join(" | ")} |`);
   return [head, sep, ...body].join("\n");
 }
 
-function renderTable(rows: Record<string, unknown>[], explicit?: string[]): string {
+export function renderTable(rows: Record<string, unknown>[], explicit?: string[]): string {
   if (rows.length === 0) return "(no rows)";
   if (Array.isArray(rows) === false) return "";
   const cols = columnsOf(rows, explicit);
-  const cells = rows.map((row) => cols.map((c) => scalar(row[c])));
+  const cells = rows.map((row) => cols.map((c) => scalar(row[c], "-")));
   const widths = cols.map((c, i) => Math.max(c.length, ...cells.map((r) => r[i].length)));
   const fmt = (r: string[]) => r.map((v, i) => v.padEnd(widths[i])).join("  ").trimEnd();
   const lines = [fmt(cols), fmt(widths.map((w) => "─".repeat(w)))];

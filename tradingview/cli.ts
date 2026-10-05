@@ -45,7 +45,7 @@ import {
   usageError,
   type Format,
 } from "./src/output.ts";
-import { knownFields, planSelect, projectRow } from "./src/select.ts";
+import { PRICE_FIELDS, knownFields, nearestField, planSelect, projectRow } from "./src/select.ts";
 import {
   resolutionNote,
   resolveSymbols,
@@ -66,7 +66,7 @@ import {
   withRetry,
 } from "./src/util.ts";
 
-const CLI_VERSION = "2.1.0";
+const CLI_VERSION = "2.2.0";
 const LIBRARY_VERSION = "4.0.0-rc.0";
 
 // ---------------------------------------------------------------- result type
@@ -126,9 +126,29 @@ function finish(ctx: Ctx, result: CommandResult): CommandResult {
   const plan = planSelect(ctx.select, known);
 
   if (plan.unknown.length > 0) {
-    const message = `unknown --select field(s): ${plan.unknown.join(", ")}. Available: ${known.join(", ")}`;
+    const hints: string[] = [];
+    if (plan.unknown.some((f) => PRICE_FIELDS.has(f)) && !known.includes("close")) {
+      hints.push("price fields (open/high/low/close/volume) live in `candles`, not `indicators`");
+    }
+    if (ctx.command === "candles" && plan.unknown.some((f) => /^(kc|ema|macd|median)/.test(f))) {
+      hints.push("indicator fields (kc*/ema*/macd*/median_200) live in `indicators`, not `candles`");
+    }
+    for (const bad of plan.unknown) {
+      if (PRICE_FIELDS.has(bad)) continue;
+      const suggestion = nearestField(bad, known);
+      const hint = suggestion ? `did you mean "${suggestion}"?` : null;
+      if (hint && !hints.includes(hint)) hints.push(hint);
+    }
+    const dropped = `--select dropped unknown field(s): ${plan.unknown.join(", ")}`;
+    const message = `${dropped}. Available: ${known.join(", ")}${hints.length > 0 ? `; ${hints.join("; ")}` : ""}`;
     if (ctx.strict) throw usageError(message);
-    process.stderr.write(`warning: ${message}\n`);
+    // --quiet silences the stderr line, so the envelope carries the same fact:
+    // a caller that only reads stdout must still notice a dropped field.
+    if (!ctx.quiet) process.stderr.write(`warning: ${message}\n`);
+    if (envelope) {
+      const existing = Array.isArray(envelope.warnings) ? (envelope.warnings as unknown[]) : [];
+      envelope.warnings = [...existing, dropped];
+    }
   }
   if (plan.effective.length === 0) {
     throw usageError(`--select matched no output field. Available: ${known.join(", ")}`);
@@ -152,10 +172,15 @@ function candleRow(candle: Candle, volumeReliable: boolean): Record<string, unkn
   };
 }
 
-function indicatorRow(point: IndicatorPoint): Record<string, unknown> {
+function indicatorRow(point: IndicatorPoint, volumeReliable: boolean): Record<string, unknown> {
   return {
     time: point.time,
     time_iso: toIso(point.time),
+    open: round(point.open, 8),
+    high: round(point.high, 8),
+    low: round(point.low, 8),
+    close: round(point.close, 8),
+    volume: volumeReliable ? round(point.volume, 8) : null,
     kc1_mid: round(point.kc1_mid, 8),
     kc1_upper: round(point.kc1_upper, 8),
     kc1_lower: round(point.kc1_lower, 8),
@@ -519,7 +544,7 @@ async function cmdIndicators(ctx: Ctx): Promise<CommandResult> {
     trimmed.length > 0 ? { first: toIso(trimmed[0].time), last: toIso(trimmed[trimmed.length - 1].time) } : null;
 
   const ordered = bool(ctx.flags, "newest-first") ? [...trimmed].reverse() : trimmed;
-  const rows = ordered.map(indicatorRow);
+  const rows = ordered.map((point) => indicatorRow(point, loaded.meta.volume_reliable));
 
   return finish(ctx, {
     json: {
@@ -652,7 +677,7 @@ async function main(): Promise<void> {
   if (unknown.length > 0) {
     const message = `unknown flag(s): ${unknown.map((f) => `--${f}`).join(", ")}. Run \`tradingview help\` for the flag list.`;
     if (bool(flags, "strict")) throw usageError(message);
-    process.stderr.write(`warning: ${message}\n`);
+    if (!bool(flags, "quiet")) process.stderr.write(`warning: ${message}\n`);
   }
 
   const command = positional.shift() as string;

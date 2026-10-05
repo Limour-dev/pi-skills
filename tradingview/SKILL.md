@@ -71,6 +71,10 @@ tradingview indicators BTCUSD --tf 1D --count 30 --select time_iso,macd,macd_his
 tradingview indicators BINANCE:SOLUSDT --tf 4h --from -30d
 ```
 
+# 一次拿到「价格 + 指标」：indicators 的行也带 OHLCV，不必再跑 candles 对齐
+tradingview indicators USDT.D --tf 1D --count 60 \
+  --select time_iso,close,kc1_lower,kc_low_lower,median_200,macd,macd_hist --format csv
+
 | flag | 默认 | 含义 |
 | --- | --- | --- |
 | `--tf`, `--timeframe` | `D` | `1 3 5 15 30 45 60 120 180 240`（分钟）、`D W M`；别名 `1m 3m 5m 15m 30m 45m 1h 2h 3h 4h 1d 1w 1mo` |
@@ -90,11 +94,28 @@ candles}`。`indicators` 输出同信封，再加 `indicator`、`params`、`warm
 `series`。每根 K 线是 `{time, time_iso, open, high, low, close, volume}`，
 `time` 为 bar 开盘时间 Unix 秒，`time_iso` 为 UTC。
 
+`indicators` 的 `series[]` 元素**也带 `open/high/low/close/volume`**（取自同一根
+bar），所以一次调用就能同时拿到价格与指标；默认表格列仍是纯指标，价格字段通过
+`--select` 取用，现有 csv 消费者不受影响。
+
 `--select` 的契约：
 - csv/table/md 的**表头只含所选字段**，不会出现空列；
 - json 顶层**仍是对象**（`symbol`/`coverage`/`cache`/`warnings` 都在），只是
   `candles[]` / `series[]` 的元素收窄为所选字段；
-- 未知字段名 → stderr 警告并忽略；全部未知或加了 `--strict` → exit 2。
+- 未知字段名 → stderr 警告并忽略，同时在 JSON 信封的 `warnings[]` 里留一条
+  `--select dropped unknown field(s): …`；`--quiet` 只抑制 stderr，信封照旧。
+  全部未知或加了 `--strict` → exit 2。提示会跨命令指路（价格字段在
+  `candles`、指标字段在 `indicators`），并对拼写给出 `did you mean`。
+
+**多周期（如 1D + W + 4h）**：没有一次返回多个周期的 flag。每个周期的输出行都带
+`time_iso`，按周期各跑一次、用同一组 `--select` 收窄后即可按时间列对齐：
+
+```bash
+for tf in 1D W 240; do
+  tradingview indicators USDT.D --tf "$tf" --count 60 \
+    --select time_iso,close,kc1_lower,macd_hist --format csv
+done
+```
 
 ## Step 3 · 只取已收盘的 K 线
 
@@ -162,6 +183,7 @@ TradingView 自动补全。输出里的 `resolved_from` 标明来源
    指数不是价格序列」；要价格请写 `EXCHANGE:SYMBOL`。
 3. **看 `volume_reliable`**：指数/合成序列为 `false`，此时 `volume` 一律为
    `null`——不要用指数序列的量能做推断。`TVC:USxxY` 的 `1e+100` 哨兵同样按缺失。
+   表格里这类缺失渲染为 `-`、csv 里为 `null`（**不是**解析失败或字段丢失）。
 4. **看 `stale` / `warnings`**：`stale: true` 或存在 `warnings` 时如实说明数据
    新鲜度/降级。
 5. **匿名限制**：分钟级历史较短，过去的 `--from` 可能被截断；如实说明，不要编数。
@@ -174,7 +196,7 @@ TradingView 自动补全。输出里的 `resolved_from` 标明来源
 | 1 | 其他运行错误 | `CRITICAL_ERROR` |
 | 2 | 用法错误（含未知 flag / `--select` 字段、`--tf` 不支持） | `USAGE` / `INVALID_ARGUMENT` |
 | 3 | 标的找不到 / 该区间无已收盘 K 线 | `SYMBOL_ERROR` / `NO_DATA` |
-| 4 | 权限 / 分辨率不可用（如匿名下的秒级、360/480/720 分钟） | `SERIES_ERROR` |
+| 4 | 服务端拒绝该分辨率 / 无权限（如需付费账号的秒级） | `SERIES_ERROR` |
 | 5 | 超时 / 被取消 | `TIMEOUT` / `ABORTED` |
 | 6 | 网络 / 协议 / 解析 | `HTTP_ERROR` / `DISCONNECTED` |
 | 69 | 缺依赖 / Node 版本过低 | — |

@@ -103,6 +103,75 @@ run_fail "unknown select field (strict)" candles BTCUSD --tf 1D --count 2 --sele
 run_fail "unknown flag (strict)" candles BTCUSD --tf 1D --count 2 --frobnicate --strict --cache "$CACHE"
 run_fail "unsupported tf 360" candles BTCUSD --tf 360 --count 2 --cache "$CACHE"
 
+
+# N1: indicators rows carry OHLCV, so price and indicators come from one call.
+out="$("$CLI" indicators BTCUSD --tf 1D --count 2 --select time_iso,close,kc1_lower --format csv --cache "$CACHE" --timeout 60000 2>/dev/null)"
+if [ "$(printf '%s\n' "$out" | head -1)" = "time_iso,close,kc1_lower" ]; then
+  echo "ok    indicators select includes price fields"
+  pass=$((pass + 1))
+else
+  echo "FAIL  indicators select includes price fields (got: $(printf '%s\n' "$out" | head -1))"
+  fail=$((fail + 1))
+fi
+out="$("$CLI" indicators BTCUSD --tf 1D --count 2 --select time_iso,close --compact --cache "$CACHE" --timeout 60000 2>/dev/null)"
+if printf '%s' "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["series"][0]; assert "close" in r and "kc1_lower" not in r, r'; then
+  echo "ok    indicators select narrows both price and indicator columns"
+  pass=$((pass + 1))
+else
+  echo "FAIL  indicators select narrows both price and indicator columns"
+  fail=$((fail + 1))
+fi
+
+# N2: a dropped --select field is visible in the JSON envelope, not only stderr.
+out="$("$CLI" candles BTCUSD --tf 1D --count 2 --select time_iso,time_isoo --compact --cache "$CACHE" --timeout 30000 2>/dev/null)"
+if printf '%s' "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any("dropped" in w for w in d.get("warnings", [])), d.get("warnings"); assert "time_isoo" not in d["candles"][0]'; then
+  echo "ok    dropped select field lands in envelope warnings"
+  pass=$((pass + 1))
+else
+  echo "FAIL  dropped select field lands in envelope warnings"
+  fail=$((fail + 1))
+fi
+
+# N2b: --quiet leaves stderr free of warning text.
+err="$("$CLI" candles BTCUSD --tf 1D --count 2 --select time_iso,time_isoo --quiet --cache "$CACHE" --timeout 30000 2>&1 >/dev/null)"
+if [ -z "$err" ]; then
+  echo "ok    --quiet silences the select warning"
+  pass=$((pass + 1))
+else
+  echo "FAIL  --quiet silences the select warning (stderr: $err)"
+  fail=$((fail + 1))
+fi
+err="$("$CLI" candles BTCUSD --tf 1D --count 2 --frobnicate --quiet --cache "$CACHE" --timeout 30000 2>&1 >/dev/null)"
+if [ -z "$err" ]; then
+  echo "ok    --quiet silences the unknown-flag warning"
+  pass=$((pass + 1))
+else
+  echo "FAIL  --quiet silences the unknown-flag warning (stderr: $err)"
+  fail=$((fail + 1))
+fi
+
+# N3: the warning points across commands and suggests the nearest field.
+err="$("$CLI" candles BTCUSD --tf 1D --count 2 --select time_isoo --strict --cache "$CACHE" --timeout 30000 2>&1 >/dev/null)"
+case "$err" in
+  *'did you mean'*time_iso*) echo "ok    typo gets a did-you-mean hint"; pass=$((pass + 1)) ;;
+  *) echo "FAIL  typo gets a did-you-mean hint (stderr: $err)"; fail=$((fail + 1)) ;;
+esac
+err="$("$CLI" candles BTCUSD --tf 1D --count 2 --select kc1_mid --strict --cache "$CACHE" --timeout 30000 2>&1 >/dev/null)"
+case "$err" in
+  *'live in `indicators`'*) echo "ok    cross-command hint points at indicators"; pass=$((pass + 1)) ;;
+  *) echo "FAIL  cross-command hint points at indicators (stderr: $err)"; fail=$((fail + 1)) ;;
+esac
+
+# N5: an unsupported --tf is a local USAGE error (exit 2), not a server SERIES_ERROR.
+"$CLI" candles BTCUSD --tf 360 --count 1 --cache "$CACHE" >/dev/null 2>&1
+code=$?
+if [ "$code" -eq 2 ]; then
+  echo "ok    unsupported --tf exits 2 (USAGE)"
+  pass=$((pass + 1))
+else
+  echo "FAIL  unsupported --tf exits 2 (got $code)"
+  fail=$((fail + 1))
+fi
 echo "== resolution metadata =="
 out="$("$CLI" candles SOL --tf 1D --count 1 --compact --cache "$CACHE" --timeout 30000 2>/dev/null)"
 if printf '%s' "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["symbol"] == "BINANCE:SOLUSDT", d["symbol"]; assert d["unit"] == "price"'; then

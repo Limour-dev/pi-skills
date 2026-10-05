@@ -9,11 +9,11 @@ import { CliError, usageError, EXIT } from "./output.ts";
  *
  * This list is the single source of truth for `--tf`: the help text, the parse
  * error and `references/commands.md` all derive from it, so they can never
- * disagree again. Only resolutions verified to work anonymously are listed;
- * `360` / `480` / `720` minutes answer `SERIES_ERROR: custom_resolution` and
- * `1S` answers `seconds_not_entitled` on an anonymous session, so they are not
- * accepted here (they may work on a paid account, but the CLI refuses to
- * advertise an unverified value).
+ * disagree again. Only resolutions verified to work anonymously are listed.
+ * `360` / `480` / `720` minutes and seconds (`1S`) are rejected right here as a
+ * local `USAGE` error (exit 2): they are outside the accepted set, regardless of
+ * the account. A server-side entitlement refusal for a series the CLI does pass
+ * through surfaces later as `SERIES_ERROR` (exit 4).
  */
 export const TIMEFRAMES: readonly string[] = [
   "1",
@@ -69,7 +69,6 @@ export function timeframeSeconds(timeframe: string): number | null {
   if (timeframe === "M") return null;
   if (timeframe === "D") return 86_400;
   if (timeframe === "W") return 604_800;
-  if (timeframe === "1S") return 1;
   const minutes = Number(timeframe);
   return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : null;
 }
