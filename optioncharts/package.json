@@ -1,0 +1,43 @@
+{
+  "name": "optioncharts",
+  "version": "0.1.0",
+  "description": "Zero-dependency, pure-TypeScript CLI for optioncharts.io weekly options data: per-expiry chain statistics, gamma/delta exposure (GEX/DEX) by strike, call & put walls, max pain, open interest, volume, IV skew, greeks and realtime spot — scraped from htmx fragments that inline the chart JSON.",
+  "type": "module",
+  "bin": {
+    "optioncharts": "bin/optioncharts"
+  },
+  "files": [
+    "bin",
+    "src",
+    "cli.ts",
+    "references"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.ts",
+    "smoke": "bash scripts/smoke-test.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "keywords": [
+    "options",
+    "optioncharts",
+    "open-interest",
+    "gamma-exposure",
+    "gex",
+    "dex",
+    "call-wall",
+    "put-wall",
+    "max-pain",
+    "implied-volatility",
+    "weekly-options",
+    "cli"
+  ],
+  "license": "GPL-3.0",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.5.4"
+  }
+}

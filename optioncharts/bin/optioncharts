@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# optioncharts CLI wrapper — run the pure-TS optioncharts.io client from anywhere.
+#
+#   optioncharts scan TLT SPY QQQ --dte 7 --weekly-only --format csv
+#   optioncharts gex TLT --exp 2026-10-09:w --top 20 --format csv
+#   optioncharts stats SPY --dte 14
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec node "$DIR/cli.ts" "$@"

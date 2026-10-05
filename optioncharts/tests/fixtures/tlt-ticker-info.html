@@ -1,0 +1,249 @@
+  <!--stock price history chart -->
+  <div class="row tw-mb-6">
+    <div class="col-12">
+      <!--    <h2 class="tw-font-bold tw-text-2xl tw-mb-3"> Stock Price</h2>-->
+      <div id="stock-price-history-container"
+           hx-get="/async/stock_price_history?ticker=TLT"
+           hx-trigger="load, stock-price-history-update"
+           hx-vals='js:{ time_period_selected: window.stockPriceHistoryTimePeriod || "" }'
+           hx-sync="this:drop"
+           class="tw-overflow-hidden"
+           style="height: 270px;">
+        <!-- Chart content loads here -->
+        <script>
+            // $(document).ready(function () {loadLocalSpinner('stock-price-history-container');});
+        </script>
+      </div>
+    </div>
+  </div>
+
+    <!-- Company fundamental data section -->
+    <div class="row tw-mb-3">
+      <div class="col-12">
+        <h2 class="tw-font-bold tw-text-2xl tw-mb-1.5">TLT Overview</h2>
+
+        <!-- Company Profile Description -->
+
+        <!-- Company Details Grid -->
+
+      </div>
+    </div>
+
+    <!-- Stock Statistics Section -->
+    <div class="row tw-mb-6">
+      <div class="col-12">
+        <!--    <h2 class="tw-font-bold tw-text-2xl tw-mb-3"> Key Statistics</h2>-->
+        <div class="tw-grid tw-grid-cols-2 md:tw-grid-cols-4 tw-gap-x-6 tw-gap-y-4 tw-text-sm">
+
+          <!-- Hide market cap, PE ratio, high today, low today if market cap data is not available -->
+
+          <!-- P/E Ratio -->
+
+          <!-- Dividend Yield -->
+          <div>
+            <div class="tw-text-sm tw-text-gray-500 tw-mb-1">Dividend Yield</div>
+            <div class="tw-font-bold tw-text-base">
+              4.85%
+            </div>
+          </div>
+
+          <!-- Average Volume -->
+          <div>
+            <div class="tw-text-sm tw-text-gray-500 tw-mb-1">Average Volume</div>
+            <div class="tw-font-bold tw-text-base">
+              47.85M
+            </div>
+          </div>
+
+
+          <!-- High Today -->
+          <div>
+            <div class="tw-text-sm tw-text-gray-500 tw-mb-1">High Today</div>
+            <div class="tw-font-bold tw-text-base">
+              $77.72
+            </div>
+          </div>
+
+          <!-- Low Today -->
+          <div>
+            <div class="tw-text-sm tw-text-gray-500 tw-mb-1">Low Today</div>
+            <div class="tw-font-bold tw-text-base">
+              $77.08
+            </div>
+          </div>
+
+          <!-- Open Price -->
+          <div>
+            <div class="tw-text-sm tw-text-gray-500 tw-mb-1">Open Price</div>
+            <div class="tw-font-bold tw-text-base">
+              $77.50
+            </div>
+          </div>
+
+          <!-- Volume -->
+          <div>
+            <div class="tw-text-sm tw-text-gray-500 tw-mb-1">Volume</div>
+            <div class="tw-font-bold tw-text-base">
+              3.63M
+            </div>
+          </div>
+
+
+          <!-- 52 Week High -->
+          <div>
+            <div class="tw-text-sm tw-text-gray-500 tw-mb-1">52 Week High</div>
+            <div class="tw-font-bold tw-text-base">
+              $92.18
+            </div>
+          </div>
+
+          <!-- 52 Week Low -->
+          <div>
+            <div class="tw-text-sm tw-text-gray-500 tw-mb-1">52 Week Low</div>
+            <div class="tw-font-bold tw-text-base">
+              $76.76
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+
+<div id="option-overview-live-container"
+     hx-get="/async/options_ticker_overview_live?ticker=TLT"
+     hx-vals='js:{expiration_dates: new URLSearchParams(window.location.search).get("expiration_dates") || "all", sort: new URLSearchParams(window.location.search).get("sort") || ""}'
+     hx-trigger="load"
+     hx-sync="this:drop">
+  <script>
+      $(document).ready(function () {
+          loadLocalSpinner('option-overview-live-container');
+      });
+  </script>
+</div>
+
+<!--feedback form-->
+<div class="tw-mt-4 tw-text-sm tw-text-gray-400">
+  
+  <!-- defaults to info button-->
+
+    <a href="#feedback_modal_id" type="" class="tw-font-medium tw-text-blue-600 dark:tw-text-blue-500" data-bs-toggle="modal" data-bs-target="#feedback_modal_id">Give feedback on this chart</a>
+
+<!--the modal, hidden by default-->
+<div class="modal fade" id="feedback_modal_id" tabindex="-1" aria-labelledby="exampleModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+        <div class="modal-header tw-flex tw-justify-between tw-items-center">
+          <h2 class="modal-title tw-font-bold tw-text-2xl">Give feedback</h2>
+          <button type="button" data-bs-dismiss="modal" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="tw-h-6 tw-w-6 tw-text-black">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      <div class="modal-body tw-font-normal tw-text-md">
+        <div style="text-align: left">
+          <div class="container" id="feedback_container">
+  <form id="feedbackForm">
+    <div class="mb-3">
+      <label for="feedback" class="tw-block tw-mb-2 tw-text-sm tw-font-medium tw-text-gray-900">Describe
+        your issue or suggestion:</label>
+      <textarea id="feedback" name="feedback" class="tw-bg-gray-50 tw-border tw-border-gray-300 tw-text-gray-900 tw-text-sm tw-rounded-lg focus:tw-ring-blue-500 focus:tw-border-blue-500 tw-block tw-w-full tw-p-2.5" rows="4" cols="50"></textarea>
+    </div>
+    <div class="mb-3">
+      <label for="email" class="tw-block tw-mb-2 tw-text-sm tw-font-medium tw-text-gray-900">Your
+        email address (optional):</label>
+      <input type="email" id="email" name="email" class="tw-bg-gray-50 tw-border tw-border-gray-300 tw-text-gray-900 tw-text-sm tw-rounded-lg focus:tw-ring-blue-500 focus:tw-border-blue-500 tw-block tw-w-full tw-p-2.5">
+    </div>
+    <div class="mb-3">
+      <label for="current_page" class="tw-block tw-mb-2 tw-text-sm tw-font-medium tw-text-gray-900">
+        Feedback for page:
+      </label>
+      <input
+        type="text"
+        id="current_page"
+        name="current_page"
+        class="tw-bg-gray-50 tw-border tw-border-gray-300 tw-text-gray-900 tw-text-sm tw-rounded-lg focus:tw-ring-blue-500 focus:tw-border-blue-500 tw-block tw-w-full tw-p-2.5"
+        value="">
+    </div>
+    <button type="submit" class="btn btn-primary">Submit</button>
+  </form>
+</div>
+
+<script>
+    $(document).ready(function () {
+        // update page url value when modal is shown
+        $(window).on('shown.bs.modal', function () {
+            $("#current_page").val(window.location.href);
+        });
+
+        $("#feedbackForm").submit(function (event) {
+            event.preventDefault();
+
+            // Get form data
+            var formData = {
+                feedback: $("#feedback").val(),
+                email: $("#email").val(),
+                current_page: $("#current_page").val()
+            };
+
+            submitFeedbackForm(formData);
+        });
+    });
+
+    function submitFeedbackForm(formData) {
+        // Send AJAX post request
+        $.ajax({
+            type: "POST",
+            url: "/async/submit_feedback",
+            data: JSON.stringify(formData),
+            contentType: "application/json",
+                            success: function (response) {
+                                // Handle success response here
+                                console.log(response);
+                                // Clear form fields
+                                $("#feedback").val("");
+                                $("#email").val("");
+                                // Fetch and inject the success confirmation partial
+                                $.ajax({
+                                    type: "GET",
+                                    url: "/async/sent_message_success",
+                                    success: function (successResponse) {
+                                        $("#feedback_container").html(successResponse);
+                                        $("#feedback_container").addClass("d-flex justify-content-center align-items-center");
+                                        // Auto-close modal after 2 seconds if rendered inside one
+                                        if ($('#feedback_modal_id').length) {
+                                            setTimeout(function () {
+                                                $('#feedback_modal_id').modal('hide');
+                                            }, 2000);
+                                        }
+                                    },
+                                    error: function (error) {
+                                        console.log("Error fetching success message:", error);
+                                    }
+                                });
+                            },
+            error: function (error) {
+                console.log(error);
+            }
+        });
+    }
+</script>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
+</div>
+
+<script>
+    $(document).ready(function () {
+        AdTracking.incrementViewCountAndCheckForAd();
+        GoogleAnalyticsHelpers.triggerCustomEvent('oc_view_chart_ticker_overview', window.location.pathname);
+        OcAnalytics.track('oc_view_chart_ticker_overview');
+    });
+</script>

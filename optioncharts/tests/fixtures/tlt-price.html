@@ -1,0 +1,115 @@
+<div class="tw-flex tw-flex-col tw-p-5 tw-max-w-sm">
+  <!-- Logo and company name section -->
+  <div class="tw-flex tw-items-center tw-mb-4">
+
+    <div class="tw-w-16 tw-h-16 tw-rounded-full tw-flex tw-justify-center tw-items-center tw-mr-3 tw-bg-gray-100" style="min-width: 60px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);">
+        <span class="tw-text-dark-green tw-font-bold tw-text-lg" style="color: #1e3a2f;">TLT</span>
+    </div>
+
+    <!-- Company name and ticker -->
+    <div class="tw-flex tw-flex-col">
+      <span class="tw-text-3xl tw-font-semibold tw-whitespace-nowrap">iShares 20+ Year Treasury Bond ETF</span>
+      <span class="tw-text-gray-500 tw-text-sm">TLT</span>
+    </div>
+  </div>
+
+  <!-- Price information section with responsive layout -->
+  <div class="tw-flex tw-items-start tw-flex-col sm:tw-flex-row sm:tw-gap-8">
+
+    <!-- Regular Market Stock price section -->
+      <div class="tw-flex tw-flex-col tw-mb-3 sm:tw-mb-1">
+        <!-- Current price -->
+        <div class="tw-flex tw-items-baseline">
+          <span class="tw-text-3xl tw-font-semibold">77.10</span>
+          <span class="tw-text-sm tw-ml-1 tw-text-gray-500">USD</span>
+            <span class="tw-text-lg tw-ml-3 tw-whitespace-nowrap" style="color: rgba(255,82,82,0.8);">
+              -0.38 (-0.49%)
+            </span>
+        </div>
+
+        <!-- regular market label -->
+        <div class="tw-text-xs tw-text-gray-500 tw-mt-1 tw-flex tw-items-center tw-whitespace-nowrap">
+          <span>As of Oct 05, 9:42 AM EDT</span>
+          <i id="info_btn_id_1755" class="bi bi-info-circle tw-text-gray-500 tw-text-xs tw-mx-1 clickable tw-inline tw-align-middle"></i>
+<script id="info-tooltip-script-302453512">
+    (() => {
+        const infoElement = document.getElementById('info_btn_id_1755');
+        if (infoElement) {
+            infoElement._tippy?.destroy();
+            tippy(infoElement, {
+                content: '\n              Real-time, fair market value of the security provided by Polygon.io.\n\n              <br><br><a href=\'/docs/about-optioncharts-data\' class=\'tw-font-medium tw-underline tw-text-blue-400 hover:tw-text-blue-300 dark:tw-text-blue-300 dark:hover:tw-text-blue-200\' target=\'_blank\'>Learn more about OptionCharts Data<\/a>\n              ',
+                allowHTML: true,
+                zIndex: 1,
+                delay: [null, 200],  // hide delay
+                interactive: true, // allow clicks within the tooltip
+            });
+        }
+    })();
+</script>
+
+        </div>
+
+      </div>
+
+    <!-- VIX forward price (front-month futures) -->
+
+    <!-- Extended hours market section - wraps to new line on small screens -->
+  </div>
+
+  <!-- OPRA Data Information section -->
+  <div class="tw-mt-1">
+    <!-- OPRA data indicator -->
+
+<div class="tw-flex tw-items-center tw-gap-1">
+  <!-- Market status icon -->
+    <svg id="market_badge_816" class="tw-size-4 tw-cursor-pointer" viewBox="0 0 100 100" aria-hidden="true">
+      <rect width="100" height="100" rx="20" ry="20" fill="#E8F5F0"/>
+      <circle cx="50" cy="50" r="15" fill="#0D7A5F"/>
+    </svg>
+
+  <!-- Market status text -->
+  <span class="tw-text-gray-500" style="font-size: 0.7rem; letter-spacing: 0.02em;">
+    Market Open
+  </span>
+
+  <!-- Bullet separator -->
+  <span class="tw-text-gray-300" style="font-size: 0.5rem;">•</span>
+
+  <!-- Options icon -->
+    <!-- Wavy lines icon for 15-minute delayed options -->
+    <svg id="options_icon_227" class="tw-size-4 tw-cursor-pointer" viewBox="0 0 100 100" aria-hidden="true">
+      <rect width="100" height="100" rx="20" ry="20" fill="#FEF3E2"/>
+      <text x="50" y="72" fill="#D97706" font-size="75" font-weight="bold" text-anchor="middle">~</text>
+    </svg>
+
+  <!-- Options status text -->
+  <span class="tw-text-gray-500" style="font-size: 0.7rem; letter-spacing: 0.02em;">
+    Options 15-min Delayed
+  </span>
+</div>
+
+<script>
+    tippy('#market_badge_816', {
+        content: 'Regular trading hours are currently active',
+        allowHTML: true,
+        zIndex: 1,
+        delay: [null, 200],
+    });
+
+    tippy('#options_icon_227', {
+        content: 'You\'re viewing <b>15-minute delayed<\/b> options data. <a href=\'/pricing\' class=\'tw-font-medium tw-underline tw-text-blue-400 hover:tw-text-blue-300 dark:tw-text-blue-300 dark:hover:tw-text-blue-200\' target=\'_blank\'>Upgrade to Ultimate<\/a> to unlock real-time options data.<br><br>Options data from the Options Price Reporting Authority (OPRA).<br><br><a href=\'/docs/about-optioncharts-data\' class=\'tw-font-medium tw-underline tw-text-blue-400 hover:tw-text-blue-300 dark:tw-text-blue-300 dark:hover:tw-text-blue-200\' target=\'_blank\'>Learn more about OptionCharts Data<\/a>',
+        allowHTML: true,
+        zIndex: 1,
+        delay: [null, 200],
+        interactive: true,
+    });
+</script>
+
+
+  </div>
+
+</div>
+
+</div>
+
+
