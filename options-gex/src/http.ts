@@ -89,6 +89,7 @@ export async function httpGet(url: string, options: RequestOptions = {}): Promis
         status: hit.status,
         latency_ms: Date.now() - start,
         from_cache: true,
+        fetched_at: new Date(hit.cached_at).toISOString(),
         cf_cache: hit.cf_cache,
         ratelimit: hit.ratelimit,
       };
@@ -119,6 +120,7 @@ export async function httpGet(url: string, options: RequestOptions = {}): Promis
         status: response.status,
         latency_ms: Date.now() - start,
         from_cache: false,
+        fetched_at: new Date().toISOString(),
         cf_cache: headers["cf-cache-status"],
         ratelimit: ratelimitOf(headers),
       };

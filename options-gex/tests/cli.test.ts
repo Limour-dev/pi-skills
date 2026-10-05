@@ -240,5 +240,107 @@ test("--help and --version succeed without a ticker", async () => {
 
   const version = await run(["--version"]);
   assert.equal(version.code, 0);
-  assert.equal(version.stdout.trim(), "1.0.0");
+  assert.equal(version.stdout.trim(), "1.1.0");
+});
+
+test("every level command repeats the same top-level scalars", async () => {
+  for (const command of ["gex", "levels", "walls", "max-pain", "flip", "skew", "expiries", "raw"]) {
+    const result = await run([
+      command,
+      "SPY",
+      "--from-file",
+      join(FIX, "spy-2026-10-05-gamma.json"),
+      "--top",
+      "1",
+      "--format",
+      "compact",
+    ]);
+    assert.equal(result.code, 0, `${command}: ${result.stderr}`);
+    const data = json(result.stdout);
+    assert.equal(data.spot, 769.65, command);
+    assert.equal(data.net_gex, 544926340.3235289, command);
+    assert.equal(data.gamma_flip, 765.79, command);
+    assert.equal(data.call_wall, 770, command);
+    assert.equal(data.put_wall, 765, command);
+    assert.equal(data.max_pain, 763, command);
+  }
+});
+
+test("exposure-unit tables never carry a dollar sign", async () => {
+  const skew = await run([
+    "skew",
+    "SPY",
+    "--from-file",
+    join(FIX, "spy-all-greeks.json"),
+    "--top",
+    "2",
+    "--format",
+    "compact",
+  ]);
+  assert.equal(skew.code, 0, skew.stderr);
+  const data = json(skew.stdout);
+  assert.equal(data.units, "exposure_units");
+  const greeks = data.greeks as Record<string, { rows: Array<Record<string, unknown>> }>;
+  for (const table of Object.values(greeks)) {
+    for (const row of table.rows) {
+      assert.equal(row.unit, "exposure");
+      assert.doesNotMatch(String(row.value_pretty), /\$/);
+    }
+  }
+
+  const gex = await run([
+    "gex",
+    "SPY",
+    "--from-file",
+    join(FIX, "spy-2026-10-05-gamma.json"),
+    "--top",
+    "1",
+    "--format",
+    "compact",
+  ]);
+  const gexData = json(gex.stdout);
+  assert.equal(gexData.units, "usd_gex");
+  const rows = gexData.gex_by_strike as Array<Record<string, unknown>>;
+  assert.equal(rows[0].unit, "usd");
+  assert.match(String(rows[0].value_pretty), /^\$/);
+});
+
+test("--no-insights removes the upstream English insights", async () => {
+  const withInsights = await run([
+    "levels",
+    "SPY",
+    "--from-file",
+    join(FIX, "spy-2026-10-05-gamma.json"),
+    "--format",
+    "compact",
+  ]);
+  assert.ok((json(withInsights.stdout).insights as unknown[]).length > 0);
+
+  const without = await run([
+    "levels",
+    "SPY",
+    "--from-file",
+    join(FIX, "spy-2026-10-05-gamma.json"),
+    "--no-insights",
+    "--format",
+    "compact",
+  ]);
+  assert.equal(without.code, 0, without.stderr);
+  assert.equal("insights" in json(without.stdout), false);
+});
+
+test("multiple tickers are scan-only and scan needs a ticker", async () => {
+  const multi = await run(["levels", "SPY", "QQQ"]);
+  assert.equal(multi.code, 2);
+  assert.match(multi.stderr, /only supported by `scan`/);
+
+  const empty = await run(["scan", "--dte", "7"]);
+  assert.equal(empty.code, 2);
+  assert.match(empty.stderr, /scan requires at least one TICKER/);
+});
+
+test("--dte is announced as ignored outside expiries/scan", async () => {
+  const result = await run(["levels", "SPY", "--from-file", join(FIX, "spy-2026-10-05-gamma.json"), "--dte", "7", "--format", "compact"]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stderr, /--dte only applies to `expiries` and `scan`/);
 });

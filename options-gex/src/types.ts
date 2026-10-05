@@ -67,6 +67,8 @@ export interface HttpMeta {
   status: number;
   latency_ms: number;
   from_cache: boolean;
+  /** Local wall-clock time the body was obtained (cache write time on a hit). */
+  fetched_at?: string;
   cf_cache?: string;
   ratelimit?: { limit?: number; remaining?: number; reset?: number };
 }
@@ -143,6 +145,10 @@ export interface Provenance {
   http_status?: number;
   latency_ms?: number;
   from_cache?: boolean;
+  /** When the CLI obtained this payload locally — distinct from the server's `updated_at`. */
+  payload_fetched_at?: string;
+  /** Cloudflare edge cache status reported by the upstream (`HIT` / `MISS` / ...). */
+  cf_cache?: string;
   warnings: string[];
 }
 

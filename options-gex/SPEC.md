@@ -121,7 +121,7 @@ GET https://sellthenews.org/api/options/chain?ticker=<SYM>[&exp=YYYY-MM-DD][&gre
 | `gamma_flip` | `765.79` | 可 `null`（仪表盘对此有 `optGammaNoFlip` 文案，**已验证**代码分支） |
 | `min_iv_strike` | `773` | 最低 IV 行权价 |
 | `net_gex` | `544926340.3235289` | **原始美元**，非「百万」。符号：正 = dealer 多头 gamma |
-| `bullish_score` | `75` | 0–100 看多评分 |
+| `bullish_score` | `75` | 0–100 看多评分。**组成未公开（upstream-defined, composition unknown）**，只可作横向参考 |
 | `oi_source` | `"oi"` | OI 来源；**推断** 当 OI 缺失时可能回落为 `"vol"`，此时 OI 统计不可信 → 需 warn |
 | `market_session` | `"pre"` | 交易时段（`pre` / 别的值未穷举） |
 
@@ -406,3 +406,19 @@ REST 原载荷 35 KB / 80 KB，必须投影为：
 > 且 `maxStrikes`/`expiration` 会被静默忽略，非法 `exp`/`greeks` 会**静默回落**，必须校验 `selected_exp`）；
 > 降级通道是 MCP `get_options_data`（文本，需正则 + `isError` 三态判断 + 静默回落同样存在）；
 > 所有 Key Levels 均为**单到期日**口径，且本机 Massive key 无 chain snapshot 权限，故本 skill 是当前唯一 GEX 来源。
+
+---
+
+## 9. v1.1 落实（据 `options-gex-weekly-scan-retro` 复盘）
+
+P0：`exposure_units` 行不再带 `$`（新增逐行 `unit: "usd" | "exposure"`）；所有命令顶层
+重复同一组标量（`spot`/`net_gex`/`gamma_flip`/`call_wall`/`put_wall`/`max_pain`），
+`levels.*` 保留为别名；`zero_gamma` 差值按 |delta|/spot > 1% 分级为 `zero_gamma_reliability: low`。
+
+P1：新增 `scan <T...> --dte N`（一次扫描多标的 × 多到期日，默认 3 并发、最多 12 个到期日，
+输出精简标量 + `sign_flips`，绝不含 insights / gex_by_strike）；`--no-insights` 关闭上游英文
+insights；SKILL.md 写入周度扫描配方与 30/IP 限流预算。
+
+P2：`bullish_score` 组成标注为未公开；新增 `payload_fetched_at`（本地抓取/缓存时刻）与
+`cf_cache` 区分服务端 `updated_at`；文档注明 `insights` 为上游英文原文、`--dte` 只作用于
+`expiries`/`scan`；`references/examples.md` 固化「跨到期日净 GEX 反号」案例。

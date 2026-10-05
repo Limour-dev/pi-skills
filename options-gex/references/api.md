@@ -44,10 +44,10 @@ Fields the CLI reads from `expiration`:
 | `gamma_flip` | may be `null` |
 | `min_iv_strike` | |
 | `net_gex` | raw USD; sign: positive = dealers long gamma |
-| `bullish_score` | 0–100 |
+| `bullish_score` | 0–100. Composition is **upstream-defined and undocumented** — treat as a relative score only |
 | `oi_source` | `"oi"`; anything else changes what OI means |
 | `market_session` | e.g. `"pre"` |
-| `insights[]` | `{ type, color, title, text }`, `type` ∈ `GAMMA` / `DEALER FLOW` / `KEY LEVELS` / `VOL STATUS` |
+| `insights[]` | `{ type, color, title, text }`, `type` ∈ `GAMMA` / `DEALER FLOW` / `KEY LEVELS` / `VOL STATUS`; `text` is **English** upstream copy — translate/rewrite before quoting |
 | `strikes[]` | every strike, ascending |
 | `gex_by_strike` | `{"770.0": 96358554.49}`; sums to `net_gex` |
 | `cum_call_gex_by_strike`, `cum_put_gex_by_strike` | cumulative from the lowest strike |
@@ -56,7 +56,9 @@ Fields the CLI reads from `expiration`:
 | `option_pop_by_strike` | always empty upstream — the CLI ignores it |
 
 `updated_at` is the **server's computation time**, not a market timestamp: two tickers fetched in the
-same minute share it. Treat it as generation time, not freshness.
+same minute share it. Treat it as generation time, not freshness. The CLI adds
+`provenance.payload_fetched_at` (when the body was obtained locally; the cache write time on a cache
+hit) and `provenance.cf_cache` (Cloudflare `HIT`/`MISS`), so cache behaviour is auditable.
 
 ## MCP
 
@@ -143,5 +145,9 @@ The CLI always echoes `selected_exp`, records a `provenance.warnings` entry when
   cache and adds a cache-buster so Cloudflare revalidates.
 - REST allows 30 requests per IP; `429` is retried with backoff driven by `ratelimit-reset`, then
   fails with exit 4. MCP allows 120. In `auto` mode a REST 429 falls back to MCP.
+- `scan` turns a multi-ticker × multi-expiry sweep into a small number of requests: one fetch per
+  `(ticker, expiry)` inside `--dte`, at most `--concurrency` in flight, and it reuses the
+  `expiration_dates` of its first fetch. A weekly 3-ticker scan (≈15 requests) already consumes
+  half of the 30/IP budget, so keep `--max-exp` small and lean on the 60 s cache.
 - `OPTIONS_GEX_API_BASE` / `OPTIONS_GEX_MCP_URL` override the endpoints; `OPTIONS_GEX_OFFLINE=1`
   refuses all network calls (useful with `--from-file`).

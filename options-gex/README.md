@@ -9,6 +9,7 @@ options-gex levels SPY                       # spot / net GEX / flip / walls / m
 options-gex gex SPY --exp 2026-10-16 --strike-range 2 --format table
 options-gex flip SPY                         # regime + zero-gamma cross-check
 options-gex skew SPY --top 20                # vanna / charm by strike
+options-gex scan TLT SPY QQQ --dte 7         # one compact row per expiry this week
 options-gex probe                            # is REST/MCP reachable, and how fast?
 ```
 
@@ -16,15 +17,20 @@ options-gex probe                            # is REST/MCP reachable, and how fa
 
 - **Net GEX** and per-strike **GEX** (`gex_by_strike`, sums to `net_gex`)
 - **Gamma flip / zero-gamma**: the reported `gamma_flip` plus an independent
-  `zero_gamma_estimate` from the cumulative GEX curves
+  `zero_gamma_estimate` from the cumulative GEX curves, graded `high`/`low`
+  by how far it drifts from `gamma_flip`
 - **Call wall / put wall** with open interest and distance from spot
 - **Max pain** with distance from spot
 - **Vanna / charm** (and any other greek) net exposure by strike
 - **Expiry calendar** with day counts, P/C OI, implied move, short-term IV and the dashboard's
   bullish score and insights
+- **Term structure** via `scan`: one compact row per expiry inside `--dte`, for one or more
+  tickers, with cross-expiry net-GEX sign flips called out
 
 Every response is one expiry (nearest by default) and carries a `provenance` block with the selected
-expiry, source, `updated_at`, market session, `oi_source` and any warnings.
+expiry, source, `updated_at` (server computation time), `payload_fetched_at` (local fetch/cache time),
+`cf_cache`, market session, `oi_source` and any warnings. `levels.*` is echoed at the top level of
+every command so `d["spot"]` / `d["net_gex"]` always work.
 
 ## Channels
 
@@ -50,6 +56,7 @@ exit code 5.
 | `skew <T>` | vanna/charm net exposure by strike |
 | `expiries <T>` | expirations with DTE |
 | `raw <T>` | projected full snapshot |
+| `scan <T> [T...]` | one compact row per expiry inside `--dte` (default 7), one or more tickers |
 | `probe` | channel reachability, latency and rate-limit headers |
 
 Exit codes: `0` ok · `1` runtime · `2` usage · `3` no data · `4` rate limited · `5` silent expiry

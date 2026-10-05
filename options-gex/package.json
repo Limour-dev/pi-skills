@@ -1,7 +1,7 @@
 {
   "name": "options-gex",
-  "version": "1.0.0",
-  "description": "Zero-dependency, pure-TypeScript CLI for short-dated US option positioning from the Sell The News options dashboard: net GEX, gamma flip / zero-gamma, call & put walls, max pain, per-strike gamma and vanna/charm exposure, P/C OI, implied move and bullish score — single-expiry snapshots over a REST JSON channel with an MCP text fallback.",
+  "version": "1.1.0",
+  "description": "Zero-dependency, pure-TypeScript CLI for short-dated US option positioning from the Sell The News options dashboard: net GEX, gamma flip / zero-gamma, call & put walls, max pain, per-strike gamma and vanna/charm exposure, P/C OI, implied move and bullish score — single-expiry snapshots plus a multi-ticker / multi-expiry scan over a REST JSON channel with an MCP text fallback.",
   "type": "module",
   "bin": {
     "options-gex": "bin/options-gex"

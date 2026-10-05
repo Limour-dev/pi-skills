@@ -25,6 +25,7 @@ import {
 import { fetchChain, assertExpiryFormat, chainUrl, apiBase } from "./src/rest.ts";
 import { callOptionsData, mcpUrl, parseOptionsText } from "./src/mcp.ts";
 import { fromMcp, fromRest, snapshotFromFileBody } from "./src/normalize.ts";
+import { scanTicker, type SnapshotLoader, type TickerScan } from "./src/scan.ts";
 import {
   DEFAULT_TOP,
   projectExpiries,
@@ -71,14 +72,17 @@ const VALUE_FLAGS = new Set([
   "timeout",
   "max-retries",
   "today",
+  "tickers",
+  "concurrency",
+  "max-exp",
 ]);
-const BOOLEAN_FLAGS = new Set(["no-cache", "json-errors", "strict-exp", "verbose", "help", "version"]);
+const BOOLEAN_FLAGS = new Set(["no-cache", "no-insights", "json-errors", "strict-exp", "verbose", "help", "version"]);
 
-const COMMANDS: Command[] = ["gex", "levels", "walls", "max-pain", "flip", "skew", "expiries", "raw", "probe"];
+const COMMANDS: Command[] = ["gex", "levels", "walls", "max-pain", "flip", "skew", "expiries", "raw", "scan", "probe"];
 
 const HELP = `options-gex ${VERSION} — short-dated option positioning (GEX) from the Sell The News dashboard
 
-usage: options-gex <command> <TICKER> [flags]
+usage: options-gex <command> <TICKER> [TICKER...] [flags]
 
 commands:
   gex        key levels + per-strike GEX (or gamma net exposure) table
@@ -89,6 +93,7 @@ commands:
   skew       vanna + charm net exposure by strike
   expiries   listed expirations (with day count)
   raw        projected snapshot: levels + per-strike tables + optional dictionaries
+  scan       one compact row per expiry inside --dte, for one or more tickers
   probe      check REST and MCP reachability, latency and rate-limit headers
 
 flags:
@@ -97,7 +102,10 @@ flags:
   --top N                strikes per table (default ${DEFAULT_TOP})
   --top-by abs|nearest   rank --top by |exposure| (default) or distance to spot
   --strike-range PCT     return strikes within ±PCT% of spot (overrides --top)
-  --dte N                expiries: keep expirations no further than N days out
+  --dte N                expiries/scan: keep expirations within N days (scan default 7)
+  --concurrency N        scan: in-flight requests, 1..8 (default 3)
+  --max-exp N            scan: cap expiries per ticker (default 12)
+  --tickers A,B,C        scan: extra tickers (same as positional)
   --include LIST         raw: extra dictionaries — oi, vol, mid
   --source rest|mcp|auto channel (default auto: REST first, MCP on failure)
   --max-strikes N        MCP fallback only: strikes per table (1..200, default 40)
@@ -108,6 +116,7 @@ flags:
   --no-cache             bypass the local 60s cache and the upstream cache
   --strict-exp           exit 5 when the server silently falls back to another expiry
   --json-errors          print errors as JSON on stdout
+  --no-insights          omit the upstream English insights from the output
   --today YYYY-MM-DD     override today's date (for \`expiries\` day counts)
   --verbose              log request details to stderr
   -h, --help / --version
@@ -195,6 +204,7 @@ function enumFlag<T extends string>(flags: Flags, key: string, allowed: readonly
 interface RunOptions {
   command: Command;
   ticker: string;
+  tickers: string[];
   exp?: string;
   greeks?: string;
   greekList: string[];
@@ -209,11 +219,32 @@ interface RunOptions {
   verbose: boolean;
   maxStrikes: number;
   project: ProjectOptions;
+  insights: boolean;
+  concurrency: number;
+  maxExpirations: number;
 }
 
-function buildOptions(command: Command, ticker: string, flags: Flags): RunOptions {
+function buildOptions(command: Command, positionalTickers: string[], flags: Flags): RunOptions {
   const exp = str(flags, "exp") ?? str(flags, "expiration");
   if (exp !== undefined) assertExpiryFormat(exp);
+
+  const flagTickers = (str(flags, "tickers") ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const tickers: string[] = [];
+  for (const candidate of [...positionalTickers, ...flagTickers]) {
+    if (!tickers.some((seen) => seen.toUpperCase() === candidate.toUpperCase())) tickers.push(candidate);
+  }
+  if (command !== "scan" && tickers.length > 1) {
+    throw new UsageError(
+      "multiple tickers are only supported by `scan` (e.g. options-gex scan TLT SPY QQQ)",
+    );
+  }
+  if (command === "scan" && tickers.length === 0) {
+    throw new UsageError("scan requires at least one TICKER (e.g. options-gex scan TLT SPY QQQ)");
+  }
+  const ticker = tickers[0] ?? "SPY";
 
   const defaultGreeks = command === "skew" ? "vanna,charm" : "gamma";
   const greeksArg = str(flags, "greeks") ?? defaultGreeks;
@@ -231,6 +262,14 @@ function buildOptions(command: Command, ticker: string, flags: Flags): RunOption
   }
   const dte = numberFlag(flags, "dte");
   if (dte !== undefined && dte < 0) throw new UsageError(`--dte must be >= 0 (got ${dte})`);
+  const concurrency = numberFlag(flags, "concurrency") ?? 3;
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
+    throw new UsageError(`--concurrency must be an integer 1..8 (got ${concurrency})`);
+  }
+  const maxExpirations = numberFlag(flags, "max-exp") ?? 12;
+  if (!Number.isInteger(maxExpirations) || maxExpirations < 1) {
+    throw new UsageError(`--max-exp must be a positive integer (got ${maxExpirations})`);
+  }
   const timeoutSec = numberFlag(flags, "timeout") ?? 20;
   if (timeoutSec <= 0) throw new UsageError(`--timeout must be positive (got ${timeoutSec})`);
   const maxRetries = numberFlag(flags, "max-retries") ?? 2;
@@ -257,6 +296,7 @@ function buildOptions(command: Command, ticker: string, flags: Flags): RunOption
   return {
     command,
     ticker,
+    tickers,
     exp,
     greeks: greeksArg,
     greekList,
@@ -268,8 +308,11 @@ function buildOptions(command: Command, ticker: string, flags: Flags): RunOption
     noCache: bool(flags, "no-cache"),
     strictExp: bool(flags, "strict-exp"),
     jsonErrors: bool(flags, "json-errors"),
+    insights: !bool(flags, "no-insights"),
     verbose: bool(flags, "verbose"),
     maxStrikes,
+    concurrency,
+    maxExpirations,
     project: {
       top,
       topBy,
@@ -277,7 +320,7 @@ function buildOptions(command: Command, ticker: string, flags: Flags): RunOption
       greeks: greekList,
       include,
       today,
-      dte,
+      dte: command === "scan" ? (dte ?? 7) : dte,
     },
   };
 }
@@ -302,8 +345,12 @@ interface Loaded {
   extraWarnings: string[];
 }
 
-async function loadSnapshot(options: RunOptions, log: (msg: string) => void): Promise<Loaded> {
-  const requestedExp = options.command === "expiries" ? undefined : options.exp;
+async function loadOne(
+  options: RunOptions,
+  ticker: string,
+  requestedExp: string | undefined,
+  log: (msg: string) => void,
+): Promise<Loaded> {
 
   if (options.fromFile) {
     const path = resolve(options.fromFile);
@@ -325,9 +372,9 @@ async function loadSnapshot(options: RunOptions, log: (msg: string) => void): Pr
 
   if (useRest) {
     try {
-      log(`GET ${chainUrl(options.ticker, requestedExp, options.greeks)} (source rest)`);
+      log(`GET ${chainUrl(ticker, requestedExp, options.greeks)} (source rest)`);
       const result = await fetchChain({
-        ticker: options.ticker,
+        ticker,
         exp: requestedExp,
         greeks: options.greeks,
         timeoutMs: options.timeoutMs,
@@ -353,7 +400,7 @@ async function loadSnapshot(options: RunOptions, log: (msg: string) => void): Pr
     try {
       log(`POST ${mcpUrl()} get_options_data (source mcp)`);
       const result = await callOptionsData({
-        ticker: options.ticker,
+        ticker,
         expiration: requestedExp,
         greeks: options.greeks,
         maxStrikes: options.maxStrikes,
@@ -385,6 +432,11 @@ async function loadSnapshot(options: RunOptions, log: (msg: string) => void): Pr
   }
 
   throw restError instanceof Error ? restError : new CliError("no data source available");
+}
+
+function loadSnapshot(options: RunOptions, log: (msg: string) => void): Promise<Loaded> {
+  const requestedExp = options.command === "expiries" ? undefined : options.exp;
+  return loadOne(options, options.ticker, requestedExp, log);
 }
 
 function checkExpFallback(options: RunOptions, snapshot: Snapshot): void {
@@ -460,6 +512,40 @@ async function runProbe(options: RunOptions, log: (msg: string) => void): Promis
   };
 }
 
+async function runScan(options: RunOptions, log: (msg: string) => void): Promise<Record<string, unknown>> {
+  const load: SnapshotLoader = (ticker, exp) => loadOne(options, ticker, exp, log);
+  const scanOptions = {
+    dte: options.project.dte ?? 7,
+    exp: options.exp,
+    today: options.project.today ?? utcToday(),
+    concurrency: options.concurrency,
+    maxExpirations: options.maxExpirations,
+  };
+  const tickers: TickerScan[] = [];
+  for (const ticker of options.tickers) {
+    log(`scan ${ticker} --dte ${scanOptions.dte} --max-exp ${scanOptions.maxExpirations}`);
+    tickers.push(await scanTicker(ticker, load, scanOptions));
+  }
+  if (options.strictExp && options.exp) {
+    for (const result of tickers) {
+      const first = result.scan[0];
+      if (first && first.exp !== options.exp) {
+        throw new ExpFallbackError(
+          `silent expiry fallback: requested ${options.exp}, server returned ${first.exp}`,
+          { requested_exp: options.exp, selected_exp: first.exp },
+        );
+      }
+    }
+  }
+  return {
+    generated_at: new Date().toISOString(),
+    today: scanOptions.today,
+    dte_max: scanOptions.dte,
+    concurrency: scanOptions.concurrency,
+    tickers,
+  };
+}
+
 async function main(): Promise<void> {
   const { positional, flags } = parseArgs(process.argv.slice(2));
 
@@ -477,24 +563,33 @@ async function main(): Promise<void> {
     throw new UsageError(`unknown command "${positional[0]}"\n\n${HELP}`);
   }
 
-  const ticker = positional[1];
-  if (!ticker && command !== "probe") {
+  const hasTickerArg = Boolean(positional[1]) || str(flags, "tickers") !== undefined;
+  if (command !== "probe" && command !== "scan" && !hasTickerArg) {
     throw new UsageError(`${command} requires a TICKER (e.g. options-gex ${command} SPY)`);
   }
 
-  const options = buildOptions(command, ticker ?? "SPY", flags);
+  const options = buildOptions(command, positional.slice(1), flags);
   const log = (message: string) => {
     if (options.verbose) process.stderr.write(`[options-gex] ${message}\n`);
   };
+
+  if (str(flags, "dte") !== undefined && command !== "expiries" && command !== "scan") {
+    process.stderr.write(
+      "options-gex: note: --dte only applies to `expiries` and `scan`; ignored by this command\n",
+    );
+  }
 
   let data: Record<string, unknown>;
   if (command === "probe") {
     data = await runProbe(options, log);
     if (data.exit_code !== EXIT.ok) process.exitCode = EXIT.error;
+  } else if (command === "scan") {
+    data = await runScan(options, log);
   } else {
     const { snapshot, extraWarnings } = await loadSnapshot(options, log);
     checkExpFallback(options, snapshot);
-    data = project(command, snapshot, options, extraWarnings);
+    const view = options.insights ? snapshot : { ...snapshot, insights: [] };
+    data = project(command, view, options, extraWarnings);
   }
 
   process.stdout.write(`${render(data, options.format, command)}\n`);

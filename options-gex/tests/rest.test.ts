@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { fromRest, snapshotFromFileBody } from "../src/normalize.ts";
-import { levelBlock, projectGex, selectStrikes, zeroGammaEstimate } from "../src/project.ts";
+import { levelBlock, projectGex, selectStrikes, zeroGammaAssessment, zeroGammaEstimate } from "../src/project.ts";
 import { cleanNoise, formatUsd, parseScaled, scaleNumber } from "../src/num.ts";
 import { DataUnavailableError } from "../src/errors.ts";
 import { GREEK_ORDER, type HttpMeta, type RestChain, type Snapshot } from "../src/types.ts";
@@ -129,6 +129,21 @@ test("zero-gamma estimate comes from the cumulative curves", () => {
   assert.equal(negative.net_gex, -1544151621.4830704);
   assert.equal(negative.gamma_flip, 774.62);
   assert.equal(zeroGammaEstimate(negative), undefined);
+});
+
+test("the zero-gamma cross-check is graded by its distance from gamma_flip", () => {
+  const positive = snap("spy-2026-10-05-gamma.json");
+  const high = zeroGammaAssessment(positive);
+  assert.equal(high?.reliability, "high");
+  assert.equal(high?.delta, 4.94);
+  assert.match(String(high?.note), /small delta is expected/);
+
+  // SPY 10-09 diverged from gamma_flip by ~2.2% of spot in the live scan.
+  const diverging = { ...positive, gamma_flip: 750 };
+  const low = zeroGammaAssessment(diverging);
+  assert.equal(low?.reliability, "low");
+  assert.match(String(low?.note), /coarse cross-check only/);
+  assert.ok((low?.delta_pct_of_spot ?? 0) > 1);
 });
 
 test("strike selection ranks by absolute exposure by default", () => {

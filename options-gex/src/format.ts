@@ -110,6 +110,37 @@ function renderTable(command: Command, data: unknown): string {
       );
       break;
     }
+    case "scan": {
+      const tickers = (data.tickers as Array<Record<string, unknown>>) ?? [];
+      for (const ticker of tickers) {
+        const rows = (ticker.scan as Array<Record<string, unknown>>) ?? [];
+        blocks.push(
+          `ticker: ${scalar(ticker.ticker)}  spot: ${scalar(ticker.spot)}  scanned: ${scalar(ticker.expirations_scanned)}`,
+        );
+        blocks.push(
+          columnTable(
+            rows.map((row) => [
+              String(row.exp),
+              scalar(row.dte),
+              scalar(row.net_gex_usd),
+              scalar(row.gamma_flip),
+              scalar(row.spot_vs_flip),
+              scalar(row.call_wall),
+              scalar(row.put_wall),
+              scalar(row.max_pain),
+            ]),
+            ["exp", "dte", "net_gex", "flip", "side", "call", "put", "pain"],
+          ),
+        );
+        const flips = (ticker.sign_flips as Array<Record<string, unknown>>) ?? [];
+        for (const flip of flips) {
+          blocks.push(`sign flip: ${flip.from_exp} → ${flip.to_exp} (${scalar(flip.from)} → ${scalar(flip.to)})`);
+        }
+        const errors = (ticker.errors as Array<Record<string, unknown>>) ?? [];
+        for (const problem of errors) blocks.push(`error ${problem.exp}: ${problem.error}`);
+      }
+      break;
+    }
     case "levels":
     case "walls":
     case "max-pain":

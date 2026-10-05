@@ -73,6 +73,7 @@ echo "== skew =="
 OUT=$("$CLI" skew SPY --top 3 --format compact)
 check "skew has vanna" '"vanna"' "$OUT"
 check "skew has charm" '"charm"' "$OUT"
+check "skew rows are exposure units (no dollar sign)" '"unit":"exposure"' "$OUT"
 
 echo "== expiries =="
 OUT=$("$CLI" expiries SPY --dte 7 --format compact)
@@ -83,6 +84,13 @@ echo "== raw =="
 OUT=$("$CLI" raw SPY --top 3 --format compact)
 check "raw has cumulative GEX" '"cum_gex"' "$OUT"
 check "raw has insights" '"insights"' "$OUT"
+
+
+echo "== scan =="
+OUT=$("$CLI" scan SPY --dte 7 --max-exp 3 --concurrency 2 --format compact)
+check "scan lists tickers" '"tickers"' "$OUT"
+check "scan returns rows" '"scan"' "$OUT"
+check "scan carries payload_fetched_at" '"payload_fetched_at"' "$OUT"
 
 echo "== MCP fallback =="
 OUT=$("$CLI" walls SPY --source mcp --max-strikes 5 --format compact)

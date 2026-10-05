@@ -58,15 +58,19 @@ $ options-gex gex SPY --from-file tests/fixtures/spy-2026-10-05-gamma.json --top
 
 ```json
 {
+  "spot": 769.65, "net_gex": 544926340.32, "net_gex_usd": "$544.93M",
+  "gamma_flip": 765.79, "spot_vs_flip": "above",
+  "call_wall": 770, "put_wall": 765, "max_pain": 763,
   "units": "usd_gex",
   "selection": { "mode": "top_abs", "requested": 3, "returned": 3, "available": 151, "note": "largest |exposure|" },
   "gex_by_strike": [
-    { "strike": 770, "value": 96358554.4915, "value_pretty": "$96.36M" },
-    { "strike": 771, "value": 65758067.4448, "value_pretty": "$65.76M" },
-    { "strike": 775, "value": 83013606.1794, "value_pretty": "$83.01M" }
+    { "strike": 770, "value": 96358554.4915, "value_pretty": "$96.36M", "unit": "usd" },
+    { "strike": 771, "value": 65758067.4448, "value_pretty": "$65.76M", "unit": "usd" },
+    { "strike": 775, "value": 83013606.1794, "value_pretty": "$83.01M", "unit": "usd" }
   ],
   "zero_gamma_estimate": 770.73,
-  "zero_gamma_estimate_delta": 4.94
+  "zero_gamma_estimate_delta": 4.94,
+  "zero_gamma_reliability": "high"
 }
 ```
 
@@ -112,13 +116,19 @@ The 10-16 expiry is short-gamma: spot below the flip means dealer hedging amplif
 ```bash
 $ options-gex skew SPY --from-file tests/fixtures/spy-all-greeks.json --top 2 --format compact
 {"units":"exposure_units",
+ "spot":769.65,"net_gex":544926340.32,"net_gex_usd":"$544.93M",
+ "gamma_flip":765.79,"spot_vs_flip":"above","call_wall":770,"put_wall":765,"max_pain":763,
  "levels":{"spot":769.65,"stm_iv":12.5,"pc_oi_ratio":1.06,"net_gex":544926340.32},
  "greeks":{
-   "vanna":{"rows":[{"strike":775,"value":664619.8,"value_pretty":"$664.62K"},
-                    {"strike":793,"value":479161.53,"value_pretty":"$479.16K"}]},
-   "charm":{"rows":[{"strike":760,"value":21043426.8,"value_pretty":"$21.04M"},
-                    {"strike":793,"value":-31096604.73,"value_pretty":"-$31.10M"}]}}}
+   "vanna":{"rows":[{"strike":775,"value":664619.8,"value_pretty":"664.62K","unit":"exposure"},
+                    {"strike":793,"value":479161.53,"value_pretty":"479.16K","unit":"exposure"}]},
+   "charm":{"rows":[{"strike":760,"value":21043426.8,"value_pretty":"21.04M","unit":"exposure"},
+                    {"strike":793,"value":-31096604.73,"value_pretty":"-31.10M","unit":"exposure"}]}}}
 ```
+
+`exposure_units` are the upstream's own unit, **not dollars**: every row is tagged
+`unit: "exposure"` and `value_pretty` carries no `$`. Only `usd_gex` rows (dollar GEX) get a `$`
+and `unit: "usd"`.
 
 ## 6. Expiry calendar with day counts
 
@@ -204,8 +214,8 @@ $ options-gex gex SPY --exp 10/16/2026 --json-errors
 ```bash
 $ options-gex raw SPY --from-file tests/fixtures/spy-all-greeks.json --greeks all --top 2 --include oi --format compact
 {"units":"usd_gex","greeks_available":["charm","delta","gamma","theta","vanna","vega"],
- "greeks_exposure":{"gamma":{"rows":[{"strike":770,"value":16266.86,"value_pretty":"$16.27K"},
-                                      {"strike":775,"value":14014.02,"value_pretty":"$14.01K"}]},
+ "greeks_exposure":{"gamma":{"rows":[{"strike":770,"value":16266.86,"value_pretty":"16.27K","unit":"exposure"},
+                                      {"strike":775,"value":14014.02,"value_pretty":"14.01K","unit":"exposure"}]},
                     "…":"…"},
  "open_interest_by_strike":[{"strike":770,"call":3563,"put":1578},
                             {"strike":775,"call":3588,"put":477}]}
@@ -213,3 +223,39 @@ $ options-gex raw SPY --from-file tests/fixtures/spy-all-greeks.json --greeks al
 
 `--from-file` accepts a saved REST JSON body, a saved MCP JSON-RPC envelope, or raw MCP text, so a
 snapshot captured from any channel can be replayed without network access.
+
+## 11. Weekly term structure with `scan`
+
+```bash
+$ options-gex scan SPY --dte 14 --max-exp 12 --concurrency 4 --format table
+ticker: SPY  spot: 769.65  scanned: 10
+       exp  dte   net_gex    flip   side  call  put  pain
+2026-10-05    0  $544.93M  765.79  above   770  765   763
+2026-10-06    1  $366.21M  764.18  above   775  770   764
+2026-10-07    2   $88.60M  768.14  above   770  760   764
+2026-10-08    3   $94.28M   765.4  above   768  765   765
+2026-10-09    4  $858.87M  767.13  above   785  767   767
+2026-10-12    7  $101.34M  761.42  above   770  765   764
+2026-10-13    8   $47.66M  764.22  above   774  745   765
+2026-10-14    9   $33.69M  762.79  above   785  755   763
+2026-10-15   10   $13.39M  758.38  above   765  765   765
+2026-10-16   11   -$1.54B  774.62  below   785  750   765
+sign flip: 2026-10-15 → 2026-10-16 (13389079.22 → -1544151621.48)
+```
+
+This is the single most valuable structure in a “next week” question: gamma is positive through
+10-15 (dealers dampen moves) and flips hard negative at the 10-16 monthly expiry, where spot sits
+*below* `gamma_flip` — hedging then amplifies moves. `sign_flips` surfaces that transition without
+any manual comparison, and the whole table came from a handful of concurrent calls instead of a
+dozen `levels` round-trips.
+
+Multi-ticker variant, same schema:
+
+```bash
+$ options-gex scan TLT SPY QQQ --dte 7 --concurrency 3 --format compact
+{"generated_at":"…","today":"2026-10-05","dte_max":7,"concurrency":3,"tickers":[{"ticker":"SPY",
+ "spot":769.65,"source":"rest","expirations_scanned":5,"sign_flips":[],"warnings":[],"errors":[],
+ "payload_fetched_at":"2026-10-05T13:22:44.921Z","scan":[{"exp":"2026-10-05","dte":0,
+ "net_gex_usd":"$544.93M","gamma_flip":765.79,"spot_vs_flip":"above","call_wall":770,"put_wall":765,
+ "max_pain":763,"bullish_score":75,"regime":"positive"}, …]}]}
+```

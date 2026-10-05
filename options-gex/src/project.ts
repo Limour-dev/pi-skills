@@ -5,8 +5,7 @@
  */
 
 import type { Insight, Provenance, SeriesUnits, Snapshot } from "./types.ts";
-import { formatUsd, pctChange, round } from "./num.ts";
-
+import { formatUsd, pctChange, round, scaleNumber } from "./num.ts";
 export const DEFAULT_TOP = 40;
 
 export interface SelectOptions {
@@ -46,6 +45,8 @@ export function provenance(snapshot: Snapshot, extraWarnings: string[] = []): Pr
   out.http_status = snapshot.meta.status;
   out.latency_ms = snapshot.meta.latency_ms;
   if (snapshot.meta.from_cache !== undefined) out.from_cache = snapshot.meta.from_cache;
+  if (snapshot.meta.fetched_at) out.payload_fetched_at = snapshot.meta.fetched_at;
+  if (snapshot.meta.cf_cache) out.cf_cache = snapshot.meta.cf_cache;
   return out;
 }
 
@@ -74,6 +75,35 @@ export function levelBlock(snapshot: Snapshot): Record<string, unknown> {
     forward_price: snapshot.forward_price,
   };
   return defined(levels);
+}
+
+/**
+ * The compact key-level scalars every command repeats at the top level so
+ * `d['spot']` / `d['net_gex']` work no matter which command produced the JSON.
+ * `levels.*` remains the backward-compatible alias.
+ */
+export function scalarBlock(snapshot: Snapshot): Record<string, unknown> {
+  const levels = levelBlock(snapshot);
+  const out: Record<string, unknown> = {};
+  for (const key of [
+    "spot",
+    "net_gex",
+    "net_gex_usd",
+    "gamma_flip",
+    "spot_vs_flip",
+    "call_wall",
+    "put_wall",
+    "max_pain",
+  ]) {
+    if (key in levels) out[key] = levels[key];
+  }
+  return out;
+}
+
+/** Attach `insights` only when there is something to show (see `--no-insights`). */
+function withInsights(out: Record<string, unknown>, snapshot: Snapshot): Record<string, unknown> {
+  if (snapshot.insights.length) out.insights = snapshot.insights.map(insightLine);
+  return out;
 }
 
 function defined(input: Record<string, unknown>): Record<string, unknown> {
@@ -184,14 +214,27 @@ export function selectStrikes(
   };
 }
 
-export function seriesRows(
-  strikes: number[],
-  data: Record<string, number>,
-): Array<{ strike: number; value: number; value_pretty: string }> {
-  return strikes.map((strike) => {
-    const value = data[String(strike)] ?? 0;
-    return { strike, value: round(value, 4), value_pretty: formatUsd(value) };
-  });
+export interface SeriesRow {
+  strike: number;
+  value: number;
+  value_pretty: string;
+  /** `usd` for dollar GEX, `exposure` for the upstream's unspecified exposure units. */
+  unit: "usd" | "exposure";
+}
+
+/**
+ * Format one exposure value: dollar GEX keeps the `$`, every other series must
+ * not (the upstream exposure units are not dollars).
+ */
+export function seriesRow(strike: number, value: number, units: SeriesUnits): SeriesRow {
+  if (units === "usd_gex") {
+    return { strike, value: round(value, 4), value_pretty: formatUsd(value), unit: "usd" };
+  }
+  return { strike, value: round(value, 4), value_pretty: scaleNumber(value), unit: "exposure" };
+}
+
+export function seriesRows(strikes: number[], data: Record<string, number>, units: SeriesUnits): SeriesRow[] {
+  return strikes.map((strike) => seriesRow(strike, data[String(strike)] ?? 0, units));
 }
 
 /**
@@ -215,6 +258,41 @@ export function zeroGammaEstimate(snapshot: Snapshot): number | undefined {
     }
   }
   return undefined;
+}
+
+export interface ZeroGammaAssessment {
+  estimate: number;
+  method: string;
+  delta?: number;
+  delta_pct_of_spot?: number;
+  reliability?: "high" | "low";
+  note: string;
+}
+
+/**
+ * Grade the zero-gamma cross-check. When the estimate and the server's
+ * `gamma_flip` diverge by more than 1% of spot the cross-check is no longer
+ * "a small delta" — say so instead of repeating the boilerplate caveat.
+ */
+export function zeroGammaAssessment(snapshot: Snapshot): ZeroGammaAssessment | undefined {
+  const estimate = zeroGammaEstimate(snapshot);
+  if (estimate === undefined) return undefined;
+  const method =
+    "first zero crossing of cum_call_gex_by_strike + cum_put_gex_by_strike, linearly interpolated";
+  const flip = snapshot.gamma_flip;
+  if (typeof flip !== "number") {
+    return { estimate, method, note: "no upstream gamma_flip to compare against for this expiry" };
+  }
+  const delta = round(estimate - flip, 2);
+  const deltaPct = snapshot.spot ? round((Math.abs(delta) / snapshot.spot) * 100, 2) : undefined;
+  const reliability = deltaPct !== undefined && deltaPct > 1 ? "low" : "high";
+  const note =
+    reliability === "low"
+      ? `cross-check differs from gamma_flip by ${Math.abs(delta).toFixed(2)} (${deltaPct}% of spot) — gamma_flip is the server value; treat the estimate as a coarse cross-check only`
+      : "the upstream gamma_flip uses a finer strike grid than the published strikes, so a small delta is expected";
+  const out: ZeroGammaAssessment = { estimate, method, delta, reliability, note };
+  if (deltaPct !== undefined) out.delta_pct_of_spot = deltaPct;
+  return out;
 }
 
 function cumulativePoints(snapshot: Snapshot): Array<{ strike: number; cum: number }> {
@@ -250,6 +328,7 @@ export type Command =
   | "skew"
   | "expiries"
   | "raw"
+  | "scan"
   | "probe";
 
 export interface ProjectOptions extends SelectOptions {
@@ -260,11 +339,12 @@ export interface ProjectOptions extends SelectOptions {
 }
 
 export function projectLevels(snapshot: Snapshot, extraWarnings: string[] = []): Record<string, unknown> {
-  return {
+  const out: Record<string, unknown> = {
     provenance: provenance(snapshot, extraWarnings),
+    ...scalarBlock(snapshot),
     levels: levelBlock(snapshot),
-    insights: snapshot.insights.map(insightLine),
   };
+  return withInsights(out, snapshot);
 }
 
 function insightLine(insight: Insight): Record<string, unknown> {
@@ -279,6 +359,7 @@ export function projectGex(
   const series = gexSeries(snapshot);
   const out: Record<string, unknown> = {
     provenance: provenance(snapshot, extraWarnings),
+    ...scalarBlock(snapshot),
     units: series?.units ?? null,
     series_label: series?.label ?? "no per-strike exposure series available",
     levels: levelBlock(snapshot),
@@ -286,58 +367,50 @@ export function projectGex(
   if (series) {
     const { strikes, selection } = selectStrikes(snapshot, series.data, options);
     out.selection = selection;
-    out.gex_by_strike = seriesRows(strikes, series.data);
+    out.gex_by_strike = seriesRows(strikes, series.data, series.units);
   } else {
     out.gex_by_strike = [];
   }
-  const estimate = zeroGammaEstimate(snapshot);
-  if (estimate !== undefined) {
-    const flip = snapshot.gamma_flip;
-    out.zero_gamma_estimate = estimate;
-    if (typeof flip === "number") {
-      out.zero_gamma_estimate_delta = round(estimate - flip, 2);
+  const assessment = zeroGammaAssessment(snapshot);
+  if (assessment) {
+    out.zero_gamma_estimate = assessment.estimate;
+    if (assessment.delta !== undefined) out.zero_gamma_estimate_delta = assessment.delta;
+    if (assessment.delta_pct_of_spot !== undefined) {
+      out.zero_gamma_delta_pct_of_spot = assessment.delta_pct_of_spot;
     }
+    if (assessment.reliability) out.zero_gamma_reliability = assessment.reliability;
+    out.zero_gamma_note = assessment.note;
   }
-  out.insights = snapshot.insights.map(insightLine);
-  return out;
+  return withInsights(out, snapshot);
 }
 
 export function projectWalls(snapshot: Snapshot, extraWarnings: string[] = []): Record<string, unknown> {
   return {
     provenance: provenance(snapshot, extraWarnings),
-    spot: snapshot.spot,
-    call_wall: snapshot.call_wall,
+    ...scalarBlock(snapshot),
     call_wall_oi: snapshot.call_wall_oi,
     call_wall_distance: distanceTo(snapshot, snapshot.call_wall),
-    put_wall: snapshot.put_wall,
     put_wall_oi: snapshot.put_wall_oi,
     put_wall_distance: distanceTo(snapshot, snapshot.put_wall),
-    net_gex: snapshot.net_gex,
   };
 }
-
 export function projectMaxPain(snapshot: Snapshot, extraWarnings: string[] = []): Record<string, unknown> {
   return {
     provenance: provenance(snapshot, extraWarnings),
-    spot: snapshot.spot,
-    max_pain: snapshot.max_pain,
+    ...scalarBlock(snapshot),
     max_pain_distance: distanceTo(snapshot, snapshot.max_pain),
-    net_gex: snapshot.net_gex,
     pc_oi_ratio: snapshot.pc_oi_ratio,
   };
 }
 
 export function projectFlip(snapshot: Snapshot, extraWarnings: string[] = []): Record<string, unknown> {
   const versus = spotVersusFlip(snapshot);
-  const estimate = zeroGammaEstimate(snapshot);
+  const assessment = zeroGammaAssessment(snapshot);
   const out: Record<string, unknown> = {
     provenance: provenance(snapshot, extraWarnings),
-    spot: snapshot.spot,
-    gamma_flip: snapshot.gamma_flip ?? null,
-    spot_vs_flip: versus?.spot_side ?? null,
+    ...scalarBlock(snapshot),
     distance_abs: versus?.abs,
     distance_pct: versus?.pct,
-    net_gex: snapshot.net_gex,
     regime:
       snapshot.net_gex === undefined
         ? undefined
@@ -345,15 +418,15 @@ export function projectFlip(snapshot: Snapshot, extraWarnings: string[] = []): R
           ? "positive net GEX — dealers long gamma (mean-reverting, vol-suppressing)"
           : "negative net GEX — dealers short gamma (trend-amplifying, vol-expanding)",
   };
-  if (estimate !== undefined) {
-    out.zero_gamma_estimate = estimate;
-    out.zero_gamma_method =
-      "first zero crossing of cum_call_gex_by_strike + cum_put_gex_by_strike, linearly interpolated";
-    if (typeof snapshot.gamma_flip === "number") {
-      out.zero_gamma_estimate_delta = round(estimate - snapshot.gamma_flip, 2);
-      out.zero_gamma_note =
-        "the upstream gamma_flip uses a finer strike grid than the published strikes, so a small delta is expected";
+  if (assessment) {
+    out.zero_gamma_estimate = assessment.estimate;
+    out.zero_gamma_method = assessment.method;
+    if (assessment.delta !== undefined) out.zero_gamma_estimate_delta = assessment.delta;
+    if (assessment.delta_pct_of_spot !== undefined) {
+      out.zero_gamma_delta_pct_of_spot = assessment.delta_pct_of_spot;
     }
+    if (assessment.reliability) out.zero_gamma_reliability = assessment.reliability;
+    out.zero_gamma_note = assessment.note;
   } else if (snapshot.source === "mcp") {
     out.zero_gamma_note = "the MCP text does not expose cumulative GEX, so no independent estimate is possible";
   }
@@ -374,11 +447,12 @@ export function projectSkew(
       continue;
     }
     const { strikes, selection } = selectStrikes(snapshot, data, options);
-    tables[greek] = { selection, rows: seriesRows(strikes, data) };
+    tables[greek] = { selection, rows: seriesRows(strikes, data, "exposure_units") };
   }
   return {
     provenance: provenance(snapshot, extraWarnings),
     units: "exposure_units",
+    ...scalarBlock(snapshot),
     levels: defined({
       spot: snapshot.spot,
       stm_iv: snapshot.stm_iv,
@@ -410,7 +484,7 @@ export function projectExpiries(
       : entries.filter((entry) => typeof entry.dte === "number" && entry.dte >= 0 && entry.dte <= options.dte!);
   const out: Record<string, unknown> = {
     provenance: provenance(snapshot, extraWarnings),
-    spot: snapshot.spot,
+    ...scalarBlock(snapshot),
     count: filtered.length,
     expirations: filtered,
   };
@@ -448,6 +522,7 @@ export function projectRaw(
   const primary = selectStrikes(snapshot, primaryData, options);
   const out: Record<string, unknown> = {
     provenance: provenance(snapshot, extraWarnings),
+    ...scalarBlock(snapshot),
     levels: levelBlock(snapshot),
     expiration_dates: snapshot.expiration_dates,
     insights: snapshot.insights.map(insightLine),
@@ -457,7 +532,7 @@ export function projectRaw(
   if (series) {
     out.units = series.units;
     out.selection = primary.selection;
-    out.gex_by_strike = seriesRows(primary.strikes, series.data);
+    out.gex_by_strike = seriesRows(primary.strikes, series.data, series.units);
     if (snapshot.cum_call_gex_by_strike && snapshot.cum_put_gex_by_strike) {
       out.cum_gex = primary.strikes.map((strike) => ({
         strike,
@@ -473,7 +548,7 @@ export function projectRaw(
     const data = snapshot.net_by_strike[greek];
     if (!data) continue;
     const { strikes, selection } = selectStrikes(snapshot, data, options);
-    greekTables[greek] = { selection, rows: seriesRows(strikes, data) };
+    greekTables[greek] = { selection, rows: seriesRows(strikes, data, "exposure_units") };
   }
   if (Object.keys(greekTables).length) out.greeks_exposure = greekTables;
 
