@@ -347,6 +347,35 @@ export function maxPainRows(payload: unknown): MaxPainRow[] {
   return rows;
 }
 
+/**
+ * The cone stamps every point at a **session close** in `America/New_York`
+ * (23:59:59 ET), which in UTC lands on the next calendar day. Read `et_date`,
+ * never the UTC date of `iso`.
+ */
+const ET_CLOCK = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+/** `America/New_York` date/time for an epoch-ms stamp (`null` for non-finite input). */
+export function easternTime(ms: number): { date: string; time: string } | null {
+  if (!Number.isFinite(ms)) return null;
+  const parts = ET_CLOCK.formatToParts(new Date(ms));
+  const get = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  return {
+    date: `${get("year")}-${get("month")}-${get("day")}`,
+    time: `${hour}:${get("minute")}:${get("second")}`,
+  };
+}
+
 /** Expected-move cone: one point per timestamp (838 points on a live ticker). */
 export function expectedMovePoints(payload: unknown): ExpectedMovePoint[] {
   if (!Array.isArray(payload)) return [];
@@ -357,9 +386,12 @@ export function expectedMovePoints(payload: unknown): ExpectedMovePoint[] {
     const t = typeof item.t === "number" ? item.t : null;
     if (t === null) continue;
     const date = new Date(t);
+    const et = easternTime(t);
     rows.push({
       t,
       iso: Number.isNaN(date.getTime()) ? null : date.toISOString(),
+      et_date: et?.date ?? null,
+      et_time: et?.time ?? null,
       em_amt: nullableNumber(item.em_amt),
       em_pct: nullableNumber(item.em_pct),
       low: nullableNumber(item.low),

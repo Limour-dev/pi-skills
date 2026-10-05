@@ -1,6 +1,6 @@
 {
   "name": "optioncharts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Zero-dependency, pure-TypeScript CLI for optioncharts.io weekly options data: per-expiry chain statistics, gamma/delta exposure (GEX/DEX) by strike, call & put walls, max pain, open interest, volume, IV skew, greeks and realtime spot — scraped from htmx fragments that inline the chart JSON.",
   "type": "module",
   "bin": {

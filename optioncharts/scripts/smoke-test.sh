@@ -133,6 +133,16 @@ check_code "silent expiry fallback exits 5" 5 "$(code gex TLT --exp 2026-10-09:w
 check_code "expiry fallback allowed exits 0" 0 "$(code gex TLT --exp 2026-10-09:w --allow-exp-fallback --from-file "$FIX/tlt-gamma-exposure-fallback.html")"
 check_code "offline stats exits 0" 0 "$(code stats TLT --from-file "$FIX/tlt-stats.html")"
 
+echo "== cone / normalisation / units (offline fixtures) =="
+OUT=$(run em TLT --limit 2 --format csv --from-file "$FIX/tlt-expected-move.html")
+check "em csv leads with et_date" 'ticker,et_date,et_time' "$OUT"
+check "em cone row carries the ET session date" 'TLT,2026-10-05,23:59:59' "$OUT"
+OUT=$(run gex TLT --exp 2026-10-09:w --format compact --from-file "$FIX/tlt-gamma-exposure.html")
+check "gex always exposes share_of_abs_total_pct" '"share_of_abs_total_pct"' "$OUT"
+check "gex exposes the exposure snapshot time" '"exposure_as_of"' "$OUT"
+OUT=$(run gex TLT --exp 2026-10-09:w --format csv --units --from-file "$FIX/tlt-gamma-exposure.html")
+check "--units annotates the net_exposure column" 'net_exposure\[usd_per_1pct_move\]' "$OUT"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

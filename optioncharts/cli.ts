@@ -79,8 +79,8 @@ Commands:
   raw       TICKER      dump the inline JSON (or --html) of one fragment
 
 Expiry selection:
-  --exp YYYY-MM-DD[:w|:m]  repeatable; a bare date is resolved to its :w/:m id
-  --dte N                  only expiries <= N days out (scan/expiries/stats/gex...)
+  --exp YYYY-MM-DD[:w|:m]  repeatable; resolves a bare date to its :w/:m id
+  --dte N                  keep expiries <= N days out (a ceiling, not exactly N)
   --weekly-only            keep :w expiries (weekly, i.e. non-third-Friday)
   --monthly-only           keep :m expiries
   --all-expiries           use every matching expiry instead of the nearest one
@@ -92,6 +92,7 @@ Data shaping:
   --option-type all|call|put   (default all)
   --strike-range all|MIN,MAX   (default all)
   --type open_interest|volume  gex/dex weighting (default open_interest)
+  --normalize none|pct|sigma   gex/dex cross-ticker scale (sigma adds spot/EM requests)
   --view list|straddle         chain layout (default list)
   --top N                      keep the N largest |value| rows (greeks default 40)
   --limit N                    expected-move points to print (default 24, 0 = all)
@@ -109,6 +110,7 @@ Offline / plumbing:
   --param k=v              raw: extra query parameters (repeatable)
   --html                   raw: print the fragment instead of the JSON
   --format pretty|compact|csv
+  --units                  csv: annotate headers with units (net_exposure[usd_per_1pct_move])
   --json-errors            errors as JSON on stdout (still non-zero exit)
   -h, --help / --version
 `;
@@ -128,6 +130,7 @@ const BOOL_FLAGS = new Set([
   "spot",
   "no-cache",
   "html",
+  "units",
   "json-errors",
   "help",
   "version",
@@ -140,6 +143,7 @@ const VALUE_FLAGS = new Set([
   "option-type",
   "strike-range",
   "type",
+  "normalize",
   "view",
   "top",
   "limit",
@@ -238,6 +242,7 @@ function buildOptions(flags: Flags, command: CommandName): CommandOptions {
     optionType: oneOf(flags, "option-type", ["all", "call", "put"], "all"),
     strikeRange: flags.values.get("strike-range")?.[0] ?? "all",
     exposureType: oneOf(flags, "type", ["open_interest", "volume"], "open_interest"),
+    normalize: oneOf<"none" | "pct" | "sigma">(flags, "normalize", ["none", "pct", "sigma"], "none"),
     top: top ?? (command === "greeks" ? 40 : undefined),
     limit: numberOf(flags, "limit"),
     columns: listOf(flags, "columns"),
@@ -269,6 +274,7 @@ const FLAG_COMMANDS: Record<string, CommandName[]> = {
   greek: ["greeks"],
   columns: ["stats", "chain"],
   type: ["gex", "dex", "scan"],
+  normalize: ["gex", "dex"],
 };
 
 function noteIgnoredFlags(command: CommandName, flags: Flags): void {
@@ -310,6 +316,9 @@ async function main(): Promise<number> {
   }
 
   const format = oneOf<OutputFormat>(flags, "format", ["pretty", "compact", "csv"], "pretty");
+  if (flags.bools.has("units") && format !== "csv") {
+    process.stderr.write("note: --units only affects --format csv\n");
+  }
   const client = new Client({
     timeoutMs: numberOf(flags, "timeout"),
     noCache: flags.bools.has("no-cache"),
@@ -324,7 +333,7 @@ async function main(): Promise<number> {
   }
 
   const result = await runCommand(command, command === "probe" ? ["SPY"] : tickers, ctx);
-  process.stdout.write(`${render(result.doc, format, result.csv)}\n`);
+  process.stdout.write(`${render(result.doc, format, result.csv, flags.bools.has("units"))}\n`);
   return result.exitCode ?? EXIT.ok;
 }
 

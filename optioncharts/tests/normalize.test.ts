@@ -100,6 +100,11 @@ test("expectedMovePoints returns chronological cone points", () => {
   assert.equal(points[0].em_amt, 0.55);
   assert.equal(points[0].low, 76.55);
   assert.ok(points[3].t > points[0].t);
+  // The UTC stamp is the NEXT day: each point is a session close in ET.
+  assert.equal(points[0].et_date, "2026-10-05");
+  assert.equal(points[0].et_time, "23:59:59");
+  // DST-safe: the winter point (04:59:59Z) maps back to 2029-01-19 ET.
+  assert.equal(points[3].et_date, "2029-01-19");
 });
 
 test("chainRows reads both sides of the chain", () => {

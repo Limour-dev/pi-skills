@@ -61,6 +61,20 @@ expiry; the CLI then warns `pass --gex to add walls and exposure`.
 `gex_by_strike` is truncated to 3 rows by `--top 3`; 47 strikes existed.
 Everything is `$/1%`, so the wall level matters, not the magnitude relative to a notional.
 
+## Cross-ticker normalisation — `gex TLT --exp 2026-10-09:w --top 3 --normalize pct --units --format csv`
+
+```csv
+ticker,expiry,strike,call_exposure[usd_per_1pct_move],put_exposure[usd_per_1pct_move],net_exposure[usd_per_1pct_move],share_of_abs_total_pct[pct],sigma_pos[sigma]
+TLT,2026-10-09:w,79,14294865.99,-2672476.47,11622389.52,22.6196,
+TLT,2026-10-09:w,80,7495463.15,-1631161.41,5864301.74,11.4132,
+TLT,2026-10-09:w,75,286913.09,-5607120.38,-5320207.28,-10.3542,
+```
+
+`--units` spells out the otherwise-memorised column units; `share_of_abs_total_pct` is always
+present (no extra request) and re-weights the chain to 100%, so it can be compared across tickers.
+`--normalize sigma` additionally fills `sigma_pos = (strike − spot) / expected_move_abs` (here null
+because `--from-file` cannot issue the two extra spot/statistics requests).
+
 ## Per-expiry statistics — `stats TLT --dte 4 --format csv`
 
 One request for the whole table (the CSV below is complete).
@@ -126,14 +140,16 @@ mix the two into one "as of" claim.
 ## Expected-move cone — `em TLT --limit 3 --format csv`
 
 ```csv
-ticker,t,iso,em_amt,em_pct,low,high,avg_iv
-TLT,1791259199000,2026-10-06T03:59:59.000Z,0.25,0.32,76.88,77.38,21.71
-TLT,1791345599000,2026-10-07T03:59:59.000Z,0.45,0.58,76.68,77.58,19.43
-TLT,1791431999000,2026-10-08T03:59:59.000Z,0.65,0.84,76.48,77.78,17.15
+ticker,et_date,et_time,t,iso,em_amt,em_pct,low,high,avg_iv
+TLT,2026-10-05,23:59:59,1791259199000,2026-10-06T03:59:59.000Z,0.25,0.32,76.88,77.38,21.71
+TLT,2026-10-06,23:59:59,1791345599000,2026-10-07T03:59:59.000Z,0.45,0.58,76.68,77.58,19.43
+TLT,2026-10-07,23:59:59,1791431999000,2026-10-08T03:59:59.000Z,0.65,0.84,76.48,77.78,17.15
 ```
 
-Nearest-first: the cone opens as time to expiry grows. For per-expiry numbers use
-`stats` (`expected_move_abs` / `expected_move_pct` / `iv_pct`).
+Nearest-first: the cone opens as time to expiry grows. `et_date` is the America/New_York session
+the point stamps — the UTC `iso` date is one day later, so **read `et_date`, not `iso`**. A cone row
+whose `et_date` equals an expiry should match that expiry's `scan`/`stats` `expected_move_abs`
+(they agree only on the expiry's own date); for per-expiry numbers use `stats`.
 
 ## Expiry list with the required suffix — `expiries TLT --dte 7`
 

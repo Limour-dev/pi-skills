@@ -10,13 +10,64 @@ import type { CsvBlock } from "./commands.ts";
 
 export type OutputFormat = "pretty" | "compact" | "csv";
 
-export function render(doc: unknown, format: OutputFormat, csv?: CsvBlock): string {
+export function render(doc: unknown, format: OutputFormat, csv?: CsvBlock, units = false): string {
   if (format === "csv") {
     if (!csv) return JSON.stringify(doc);
-    return renderCsv(csv);
+    return renderCsv(units ? withUnits(csv) : csv);
   }
   if (format === "compact") return JSON.stringify(doc);
   return JSON.stringify(doc, null, 2);
+}
+
+/**
+ * Column-name → unit hints for `--format csv --units`. A raw CSV is easy to
+ * misread (column 14 of `scan --gex` is `net_exposure`, which is USD per 1% move,
+ * not a dollar notional), so `--units` renders each header as `column[unit]`
+ * instead of forcing the caller to keep a mental map.
+ */
+const COLUMN_UNITS: Record<string, string> = {
+  volume_total: "contracts",
+  volume_calls: "contracts",
+  volume_puts: "contracts",
+  oi_total: "contracts",
+  oi_calls: "contracts",
+  oi_puts: "contracts",
+  contracts_total: "contracts",
+  open_interest: "contracts",
+  volume: "contracts",
+  oi: "contracts",
+  iv: "pct",
+  iv_pct: "pct",
+  implied_volatility: "decimal",
+  volume_pcr: "ratio",
+  oi_pcr: "ratio",
+  expected_move_abs: "abs_price",
+  expected_move_pct: "pct",
+  em_amt: "abs_price",
+  em_pct: "pct",
+  max_pain: "abs_price",
+  max_pain_diff_pct: "pct",
+  net_exposure: "usd_per_1pct_move",
+  call_exposure: "usd_per_1pct_move",
+  put_exposure: "usd_per_1pct_move",
+  share_of_abs_total_pct: "pct",
+  sigma_pos: "sigma",
+  delta: "decimal",
+  gamma: "decimal",
+  theta: "decimal",
+  vega: "decimal",
+  rho: "decimal",
+  avg_iv: "pct",
+};
+
+function withUnits(csv: CsvBlock): CsvBlock {
+  return {
+    headers: csv.headers.map((header) => {
+      const unit = COLUMN_UNITS[header];
+      return unit ? `${header}[${unit}]` : header;
+    }),
+    rows: csv.rows,
+  };
 }
 
 function csvField(value: string | number | null | undefined): string {

@@ -140,6 +140,16 @@ Table parsing notes:
    template implementation details and can change without notice. The CLI fails with a
    `parse_error` instead of returning empty data, and `raw --endpoint … --html` shows the
    current fragment.
+8. `expected_move` cone points stamp a **session close in `America/New_York`**
+   (`t` ≈ 23:59:59 ET), so their UTC date is one day *later*; the CLI derives `et_date` / `et_time`.
+   The cone is spot-anchored and interpolated per day — it is **not** the per-expiry
+   `option_chain_statistics` expected move, and only matches it on an expiry's own session date.
+9. GEX/DEX are **snapshot quantities** with no server timestamp in the fragment; two requests
+   minutes apart legitimately differ. The CLI exposes `exposure_as_of` / `gex_as_of` (local fetch
+   time) so callers can tell whether two numbers came from the same sample.
+10. `exposure_by_strike_series.net_exposure` (and therefore `net_exposure`) scales with each
+    ticker's contract notional and is not comparable across symbols without normalisation — the
+    CLI always emits `share_of_abs_total_pct` and can emit `sigma_pos` via `--normalize sigma`.
 
 ## Risks
 

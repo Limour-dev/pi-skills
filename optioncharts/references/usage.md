@@ -74,15 +74,18 @@ Fields the page hides (no data) come back as `null`.
 
 ### `scan <TICKER...>` — the weekly dashboard
 
-One row per expiry inside `--dte` (default **no filter**, so pass `--dte 7`), capped by
-`--max-exp` (default 8). One `option_chain_statistics` request per ticker; `--gex` adds one
+One row per expiry inside `--dte` (default **no filter**, so pass `--dte 7`; remember `--dte N` is a
+**ceiling**), capped by `--max-exp` (default 8). `--exp 2026-10-09:w` pins a single expiry (that row
+only, one request). One `option_chain_statistics` request per ticker; `--gex` adds one
 `gamma_exposure` request **per selected expiry**.
 
 Row fields: `expiration`, `kind`, `dte`, `volume_total`, `volume_pcr`, `oi_total`, `oi_pcr`,
 `iv_pct`, `expected_move_abs`, `expected_move_pct`, `max_pain`, `max_pain_diff_pct`,
 `volume_calls`, `volume_puts`, `oi_calls`, `oi_puts`, `contracts_total`, plus
 `net_exposure` / `call_exposure` / `put_exposure` / `call_wall` / `put_wall` /
-`gamma_zero_level` / `gex_expiry` / `expiry_fallback` with `--gex`.
+`gamma_zero_level` / `gex_expiry` / `gex_as_of` / `expiry_fallback` with `--gex`.
+`gex_as_of` is that row's GEX snapshot time — a `scan --gex` and a `gex` call can differ unless they
+hit the same 60 s cache, so compare the two `as_of` values before quoting both.
 
 ```bash
 optioncharts scan TLT SPY QQQ --dte 7 --weekly-only --format csv
@@ -139,8 +142,17 @@ optioncharts stats TLT --columns expiration,oi_total,iv,dte,gex,dex   # gex/dex 
 - The free tier returns **one** entry in `exposure_by_expiration` no matter how many
   expiries you request, while `gex_by_strike` is the sum across the requested expiries
   (warning included). Request one expiry for a clean series.
-- `--top N` keeps the N largest `|net_exposure|` strikes; `exposure_by_strike_count` still
-  tells you how many existed.
+- `--top N` keeps the N largest `|net_exposure|` strikes (ranking key is `|net_exposure|` — a key
+  strike can be dropped by a mid-sized one; omit `--top` for walls/flip work). `exposure_by_strike_count`
+  still tells you how many existed.
+- **Cross-ticker scale**: every strike row always carries
+  `share_of_abs_total_pct = net_exposure / Σ|net_exposure| × 100`, and the payload carries
+  `cross_ticker_note` / `share_of_abs_total_pct_note`. `--normalize sigma` additionally adds
+  `sigma_pos = (strike − spot) / expected_move_abs` plus `spot`, `spot_as_of`,
+  `expected_move_abs`, `expected_move_expiry` (needs one spot + one statistics request; it degrades
+  to a warning — with `sigma_pos: null` — when those cannot be fetched, e.g. under `--from-file`).
+- `exposure_as_of` is the exposure snapshot's fetch time (the fragment carries no OPRA snapshot
+  stamp): compare it before mixing a `scan --gex` headline with a `gex` per-strike table.
 
 ### `oi` / `volume` / `skew <TICKER>`
 
@@ -180,9 +192,18 @@ max_pain_diff_display, max_pain_diff_pct }` (`max_pain_diff_pct` is vs the curre
 ### `em <TICKER>`
 
 The expected-move cone: `point_count` (upstream ships ~838 daily points) and
-`points[]` = `{ t, iso, em_amt, em_pct, low, high, avg_iv }`, **nearest first**.
+`points[]` = `{ t, iso, et_date, et_time, em_amt, em_pct, low, high, avg_iv }`, **nearest first**.
 `--limit N` (default 24) trims the near end; `--limit 0` returns all.
-Per-expiry expected move / IV lives in `stats` (`expected_move`, `iv`), not here.
+
+- **Read `et_date`, not `iso`.** Every point stamps a session **close** in `America/New_York`
+  (23:59:59 ET), so its UTC `iso` date is one day later: the row `2026-10-06T03:59:59Z` is the
+  **2026-10-05** session. `et_time` is `23:59:59`. The CSV leads with `et_date` for the same reason.
+- The cone is **spot-anchored and recomputed on every request**; `as_of` is only the local fetch
+  time (there is no upstream snapshot stamp), and the same point moves within minutes.
+- Two expected moves exist and must not be mixed: the cone's `em_amt`/`em_pct` is the daily
+  interpolated curve, while `scan`/`stats` `expected_move_abs` is that expiry's own straddle IV.
+  They agree only on an expiry's own `et_date`. **Use `scan`/`stats` for per-expiry σ normalisation**;
+  see `cone_vs_per_expiry_note` in the payload.
 
 ### `chain <TICKER>`
 
@@ -228,7 +249,7 @@ A raw `/async/...` path is accepted too.
 | Flag | Meaning |
 | --- | --- |
 | `--exp YYYY-MM-DD[:w\|:m]` | repeatable **and** comma-separated (`--exp A:w,B:m`); always send the suffix (see api.md §Pitfalls) |
-| `--dte N` | keep expiries ≤ N days out |
+| `--dte N` | keep expiries **≤** N days out (a ceiling, not exactly N; `scan`/`stats`/`gex`/`expiries`) |
 | `--weekly-only` / `--monthly-only` | keep `:w` / `:m` expiries |
 | `--all-expiries` | chart commands: use every matching expiry instead of the nearest one |
 | `--max-exp N` | cap expiries per ticker (`scan` default 8) |
@@ -237,8 +258,9 @@ A raw `/async/...` path is accepted too.
 | `--option-type all\|call\|put` | default `all` |
 | `--strike-range all\|MIN,MAX` | upstream strike window (default `all`) |
 | `--type open_interest\|volume` | `gex`/`dex` weighting (default `open_interest`) |
+| `--normalize none\|pct\|sigma` | `gex`/`dex` cross-ticker scale: always adds `share_of_abs_total_pct`; `sigma` also adds `sigma_pos` (+2 requests) |
 | `--view list\|straddle` | `chain` layout |
-| `--top N` | keep the N largest \|value\| rows (`greeks` default 40) |
+| `--top N` | keep the N largest **\|value\|** rows, ranked by `\|net_exposure\|` for `gex`/`dex`/`oi`/`volume`/`skew` and by `\|value\|` for `greeks` (default 40) |
 | `--limit N` | `em` points to print (default 24, `0` = all) |
 | `--columns a,b,c` | `stats` / `chain` columns |
 | `--greek delta,gamma` | `greeks` filter |
@@ -246,6 +268,7 @@ A raw `/async/...` path is accepted too.
 | `--spot` | `scan`: add a real-time spot per ticker |
 | `--concurrency N` | `scan` fan-out (default 2) |
 | `--format pretty\|compact\|csv` | default `pretty` |
+| `--units` | `--format csv` only: annotate headers with units, e.g. `net_exposure[usd_per_1pct_move]` |
 | `--from-file PATH` | parse a saved fragment offline (single request only) |
 | `--no-cache` | bypass the 60 s local fragment cache |
 | `--timeout MS` | per-request timeout (default 30000) |

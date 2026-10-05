@@ -38,7 +38,7 @@ stdout 输出 JSON（默认 pretty；`--compact` 单行；`--format csv` 表格�
 | `oi` / `volume` / `skew TICKER` | 逐行权价 open interest / 成交量 / 隐含波动率 |
 | `greeks TICKER` | 逐行权价 delta/gamma/theta/vega/rho + IV（`--greek` 过滤） |
 | `max-pain TICKER` | 一次请求返回**所有**到期日的 max pain |
-| `em TICKER` | expected-move 锥形（近端 N 个点，`--limit`） |
+| `em TICKER` | expected-move 锥形（近端 N 个点，`--limit`）；每点带 `et_date`（美东交易日） |
 | `chain TICKER` | 期权链表格（call/put，bid/ask/volume/OI/IV/delta） |
 | `probe` | 各片段可达性与延迟（排查网络/改版） |
 | `raw TICKER --endpoint NAME` | 打印片段内联 JSON（`--html` 打印原始片段） |
@@ -56,6 +56,10 @@ optioncharts scan SPY --dte 14 --gex --format csv
 optioncharts gex TLT --exp 2026-10-09:w --top 20 --format csv
 optioncharts oi  TLT --exp 2026-10-09:w --format csv
 ```
+> `--dte N` 是「**≤ N 天**」的上限，不是「正好 N 天」（`--dte 4` 会拿到 0–4 DTE 的全部到期日）。
+> 只想钉住某一个到期日：`scan SPY --exp 2026-10-09:w`——只返回 1 行、只花 1 次请求，比 `--dte` 再过滤更省也不会误读。
+> `--top N` 按 `|net_exposure|` **降序**取前 N。GEX 分析的目的是找 best/worst gamma 节点，而「最大 |net|」≠「最有意义的墙」：
+> 要看完整墙位 / 翻转点就别加 `--top`，先看 `exposure_by_strike_count` 判断是否被截断，再决定要不要截。
 
 ## 到期日（`--exp`）必须带 `:w` / `:m`
 
@@ -79,14 +83,49 @@ optioncharts oi  TLT --exp 2026-10-09:w --format csv
   把它当**缺失**，不要当 0。（GEX/DEX 的按到期日汇总在免费层必塌缩成 1 行，那种情况由
   多到期日告警单独说明，不会重复刷屏。）
 
+## 两套 expected move：别混用
+
+同一个到期日会出现**两个不同的 EM**，数值可差 ~16%，全因口径不同：
+
+| | 来源 | 含义 | 何时用 |
+| --- | --- | --- | --- |
+| **per-expiry EM** | `scan` / `stats` 的 `expected_move_abs` / `expected_move_pct` | 该到期日自己的 straddle 隐含波动 | 单到期日区间 / σ 归一化——**一律用这个** |
+| **cone EM** | `em` 的 `em_amt` / `em_pct` | spot-anchored、按日 √t 递推的曲线 | 只看时间维度上的扩张，不要当某个到期日的 EM |
+
+- **cone 的日期坑**：`em` 每个点的 `t` 是**美东收盘时刻**（约 23:59:59 ET），它的 UTC 日期必然比它代表的交易日**晚一天**：
+  读 `2026-10-06T03:59:59Z` 那一行拿到的是 **10-05** 的锥体值。所以一律读新增的 `et_date` / `et_time`，
+  **不要**按 `iso` 的日期读；CSV 也已把 `et_date` 放在 `iso` 前面。
+- **自检**：cone 中 `et_date` 等于某到期日的那一行，其 `em_amt`/`em_pct` 应与 `scan`/`stats` 同到期日的
+  `expected_move_abs`/`expected_move_pct` 相等（这就是「两者在到期日当天相等」）。`em` 的 `cone_vs_per_expiry_note` 也写明了。
+- `em` 是**实时重算**的 spot-anchored 量：`as_of` 只表示本地抓取时刻（服务端不给快照戳），同一行几分钟内会变；引用时带 `as_of`。
+
+## 跨标的比较必须归一化
+
+`net_exposure` / `call_exposure` / `put_exposure` 是**每 1% 标的变动的美元 gamma/delta**，量级随每个标的的合约名义额线性变化
+（实测 TLT ≈ `$7.7k`/张，SPY/QQQ ≈ `$75k`/张）——**绝对数值跨标的比大小会系统性低估 TLT**。
+
+- `gex` / `dex` 每行**总是**带 `share_of_abs_total_pct = net_exposure / Σ|net_exposure| × 100`（免费、无需额外请求）——用它在**桶内**定位墙位。
+- `--normalize sigma` 再给出 `sigma_pos = (strike − spot) / expected_move_abs`（`spot` 取实时、`expected_move_abs` 取该到期日 per-expiry EM；
+  额外 +2 次请求，取不到时降级为 warning、`sigma_pos` 为 `null`）。
+- 组合多标的的正确做法：按 `sigma_pos` 对齐行权价，或比较「±1EM 内净 GEX 占全链比例」，**不要**直接比较 `net_exposure` 数字。
+
+## 多到期日 × 逐行权价
+
+- `oi` / `volume` / `skew` **支持一次请求多个到期日**：`--exp 2026-10-09:w,2026-10-16:m`（每行带自己的 `expiration`）。要「每个行权价 × 每个到期日」的 OI / 成交量矩阵，这是首选。
+- `gex` / `dex` 在免费层对多到期日会**塌缩**：`gex_by_strike` 是多个到期日的**求和**，`exposure_by_expiration` 只有 1 行。
+  要逐到期日的 GEX，只能每个到期日各发一次请求（`for d in ...; do optioncharts gex TICKER --exp $d:w; done`），并比较各自的 `exposure_as_of`。
+- 一次性 `ladder` / `matrix` 命令暂未提供，按上面的配方组合。
+
 ## 输出约定
 
 - 每个数据命令统一信封：`{ source, generated_at, command, tickers: [ { ticker, ... , provenance } ] }`；
   多个标的时某个失败不会中断整轮，失败项进 `failures`，退出码取最严重的那个。
 - `provenance` 里有 `endpoint` / `url` / `status` / `fetched_at` / `latency_ms` /
   `from_cache` / `requests_this_run` / `warnings` —— **报表时先看 warnings**。
-- `--format csv` 会带 `ticker` 列，适合多标的横向比较；但 CSV 丢掉了单位与 warnings，
-  需要严格口径时用 JSON（默认）。
+- `--format csv` 会带 `ticker` 列，适合多标的横向比较；但 CSV 会丢掉 warnings。
+  担心列名被误记（例如第 14 列 `net_exposure` 是 `usd_per_1pct_move` 而非美元名义额），加 `--units`
+  让表头自带单位（`net_exposure[usd_per_1pct_move]`）；需要严格口径时直接用 JSON（默认）。
+  其它 CSV 陷阱：`em` 的日期列是 `et_date`（不是裸 `iso`）；每行的 GEX 快照时刻看 `gex_as_of` / `exposure_as_of`。
 - 行权价相关的量纲：GEX/DEX 的 `net_exposure` / `call_exposure` 等是
   **每 1% 标的变动的美元 gamma/delta**（`unit: usd_per_1pct_move`），
   **不是**名义敞口、也不要加 `$` 前缀当美元. `stats` 的 `iv_pct` 是百分数，
@@ -102,6 +141,12 @@ optioncharts oi  TLT --exp 2026-10-09:w --format csv
 - 期权数据是 **15 分钟延迟**（OPRA）；`spot` 是实时（Polygon.io）。
   不适合做盘中执行级信号，适合盘后/次日布局分析。
 - `call_wall` / `put_wall` 来自内联 JSON，是**真值**（站点 UI 上却显示 🔒）。
+- **同一指标只取单一来源**：`scan --gex` 的头条 GEX 与 `gex` 的逐行表是两次独立采样
+  （只有命中同一份 60s cache 时才一致）。跨命令混引前先比 `gex_as_of` / `exposure_as_of`，
+  不一致就重取，**别把两个时刻的数字放进同一张表**。
+- GEX/DEX 是 spot-anchored 的实时量，`exposure_as_of` 是唯一可比的快照时间；
+  服务端不提供 OPRA 快照时间（只有抓取时间 `provenance.fetched_at`），期权链本身仍为 15 分钟延迟。
+- 跨标的比净敞口前**必须**先归一化（见上文「跨标的比较必须归一化」），否则会系统性低估名义额小的标的。
 - max pain 的 `max_pain_diff_pct` 是相对**当前 spot** 的百分比。
 - 上游是第三方聚合站，非交易所原始数据；条款（批量抓取/再分发）自行确认。
 
@@ -114,6 +159,7 @@ optioncharts oi  TLT --exp 2026-10-09:w --format csv
 | `stats TLT SPY QQQ` | 3 |
 | `gex TICKER --exp DATE:w` | 1（带后缀） |
 | `gex TICKER --exp DATE`（裸日期） | 2（多一次到期日解析） |
+| `gex TICKER --exp DATE:w --normalize sigma` | 3（gex + spot + stats 取 EM） |
 
 片段有 60 秒本地缓存（`~/.cache/optioncharts`，`--no-cache` 绕过），
 同一分钟内的重复调用不计请求。
@@ -124,4 +170,4 @@ optioncharts oi  TLT --exp 2026-10-09:w --format csv
 - `/async/*` 端点契约、参数、免费/付费边界、反爬与踩坑：`references/api.md`
 - 真实输出样例（JSON + CSV）：`references/examples.md`
 
-开发验证：`npm test`（44 个离线夹具用例）、`npm run typecheck`、`npm run smoke`（联网，33 项）。
+开发验证：`npm test`（48 个离线夹具用例）、`npm run typecheck`、`npm run smoke`（联网，38 项）。

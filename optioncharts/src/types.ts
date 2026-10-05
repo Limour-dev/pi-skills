@@ -111,6 +111,10 @@ export interface ExpectedMovePoint {
   /** milliseconds since epoch as sent upstream. */
   t: number;
   iso: string | null;
+  /** `YYYY-MM-DD` in America/New_York — the session whose close this point stamps. */
+  et_date: string | null;
+  /** `HH:mm:ss` in America/New_York (the point is the session close, ~23:59:59 ET). */
+  et_time: string | null;
   em_amt: number | null;
   em_pct: number | null;
   low: number | null;

@@ -235,6 +235,78 @@ test("max-pain, em and chain projections", () => {
   assert.equal(chainRow.option_type, "CALL");
   assert.equal(chainRow.strike, 65);
 });
+test("em exposes the ET session date and CSV leads with it", () => {
+  const result = run(["em", "TLT", "--limit", "2", "--from-file", fixture("tlt-expected-move.html")]);
+  const points = firstTicker(result).points as Array<Record<string, unknown>>;
+  assert.equal(points[0].et_date, "2026-10-05");
+  assert.equal(points[0].et_time, "23:59:59");
+  assert.equal(points[0].em_amt, 0.55);
+
+  const csv = run([
+    "em",
+    "TLT",
+    "--limit",
+    "1",
+    "--format",
+    "csv",
+    "--from-file",
+    fixture("tlt-expected-move.html"),
+  ]);
+  const lines = csv.stdout.trim().split("\n");
+  assert.ok(lines[0].startsWith("ticker,et_date,et_time,t,iso,"));
+  assert.ok(lines[1].startsWith("TLT,2026-10-05,23:59:59,"));
+});
+
+test("gex adds cross-ticker normalisation fields and --units labels the CSV", () => {
+  const normalized = run([
+    "gex",
+    "TLT",
+    "--exp",
+    "2026-10-09:w",
+    "--top",
+    "2",
+    "--normalize",
+    "pct",
+    "--from-file",
+    fixture("tlt-gamma-exposure.html"),
+  ]);
+  const ticker = firstTicker(normalized);
+  assert.equal(ticker.normalize, "pct");
+  assert.equal(typeof ticker.exposure_as_of, "string");
+  const rows = ticker.gex_by_strike as Array<Record<string, unknown>>;
+  assert.equal(typeof rows[0].share_of_abs_total_pct, "number");
+  assert.equal(rows[0].sigma_pos, null);
+
+  const csv = run([
+    "gex",
+    "TLT",
+    "--exp",
+    "2026-10-09:w",
+    "--top",
+    "1",
+    "--format",
+    "csv",
+    "--units",
+    "--from-file",
+    fixture("tlt-gamma-exposure.html"),
+  ]);
+  const header = csv.stdout.split("\n")[0];
+  assert.match(header, /net_exposure\[usd_per_1pct_move\]/);
+  assert.match(header, /share_of_abs_total_pct\[pct\]/);
+});
+
+test("--normalize rejects an unknown mode", () => {
+  const result = run([
+    "gex",
+    "TLT",
+    "--normalize",
+    "bogus",
+    "--from-file",
+    fixture("tlt-gamma-exposure.html"),
+  ]);
+  assert.equal(result.status, 2);
+});
+
 
 test("spot and info scrape the server-rendered widgets", () => {
   const spot = run(["spot", "TLT", "--from-file", fixture("tlt-price.html")]);

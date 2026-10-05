@@ -24,7 +24,8 @@ optioncharts max-pain TLT                                          # all expirie
   contract symbol so rows can be joined to any other dataset.
 - **Greeks** (`greeks`): delta, gamma, theta, vega, rho and IV per strike/side.
 - **Max pain** (`max-pain`): every listed expiry in a single request, with the delta to spot.
-- **Expected-move cone** (`em`) and **option chain** (`chain`: bid/ask/volume/OI/IV/delta).
+- **Expected-move cone** (`em`, points carry `et_date` in America/New_York) and **option chain**
+  (`chain`: bid/ask/volume/OI/IV/delta).
 - **Real-time spot** (`spot`) and **key stats** (`info`: dividend yield, average volume,
   day/52-week range).
 
@@ -39,12 +40,16 @@ inlined as `var <name> = {...};`. This CLI issues the fragment requests, extract
 JSON with a string-aware brace matcher, and parses the table endpoints into rows. Details,
 including the free/paid boundary and every known trap, are in `references/api.md`.
 
-The two traps worth knowing before you trust a number:
+The three traps worth knowing before you trust a number:
 
 1. `expiration_dates` **must** carry the `:w` / `:m` suffix, otherwise the server silently
    answers for a different expiry. The CLI resolves bare dates, re-reads the expiry from the
    payload and **exits 5** on a mismatch (`--allow-exp-fallback` downgrades it to a warning).
-2. GEX/DEX magnitudes are **dollars per 1% move**, not notional — `unit: usd_per_1pct_move`.
+2. GEX/DEX magnitudes are **dollars per 1% move**, not notional — `unit: usd_per_1pct_move` —
+   and they scale with each ticker's contract size, so `gex`/`dex` always expose
+   `share_of_abs_total_pct` (and `sigma_pos` under `--normalize sigma`) for cross-ticker work.
+3. `em` cone points stamp a **session close in ET** (`et_date`), so their UTC `iso` date is one
+   day later; and the cone's expected move is not the per-expiry `scan`/`stats` one.
 
 ## Install
 
@@ -64,7 +69,7 @@ Or use the wrapper directly from a checkout: `optioncharts/bin/optioncharts`.
 ## Development
 
 ```bash
-npm test          # 44 offline tests against trimmed live fixtures
+npm test          # 48 offline tests against trimmed live fixtures
 npm run typecheck # tsc --noEmit
 npm run smoke     # live run over TLT/SPY/QQQ incl. exit-code checks
 ```

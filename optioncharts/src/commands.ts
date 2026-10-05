@@ -41,6 +41,7 @@ import {
   maxPainRows,
   priceFromWidget,
   seriesRows,
+  round,
   statsRows,
   tickerInfo,
   type GreekRow,
@@ -77,6 +78,8 @@ export interface CommandOptions {
   optionType: "all" | "call" | "put";
   strikeRange: string;
   exposureType: "open_interest" | "volume";
+  /** Cross-ticker normalisation for gex/dex (see `sigmaContext`). */
+  normalize?: "none" | "pct" | "sigma";
   top?: number;
   limit?: number;
   columns?: string[];
@@ -299,6 +302,65 @@ async function cmdExpiries(
   };
 }
 
+const EXPOSURE_FRESHNESS_NOTE =
+  "options data is 15-minute-delayed OPRA and the fragment carries no OPRA snapshot timestamp, so the only " +
+  "time two GEX/DEX snapshots can be compared by is provenance.fetched_at (`exposure_as_of`) — the same " +
+  "command run minutes later is a different sample";
+
+interface SigmaContext {
+  spot: number | null;
+  spot_as_of: string | null;
+  expected_move_abs: number | null;
+  expected_move_expiry: string | null;
+  warnings: string[];
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * GEX/DEX are USD per 1% move, so their magnitude scales with each ticker's
+ * contract notional and must **not** be compared across tickers directly.
+ * `share_of_abs_total_pct` normalises against the chain's own absolute exposure
+ * (no extra request). `--normalize sigma` additionally positions each strike in
+ * units of the per-expiry expected move, which needs one spot + one statistics
+ * request; it degrades to a warning when those cannot be fetched (e.g. --from-file).
+ */
+async function sigmaContext(ctx: Context, ticker: string, ids: string[]): Promise<SigmaContext> {
+  const warnings: string[] = [];
+  let spot: number | null = null;
+  let spotAsOf: string | null = null;
+  let expectedMove: number | null = null;
+  let expectedMoveExpiry: string | null = null;
+  try {
+    const price = await fetchPriceWidget(ctx.client, ticker);
+    const widget = priceFromWidget(price.body, ticker);
+    spot = widget.price;
+    spotAsOf = widget.as_of ?? price.fetched_at;
+  } catch (error) {
+    warnings.push(`--normalize sigma: spot lookup failed (${errorText(error)}); sigma_pos omitted`);
+  }
+  if (spot !== null) {
+    try {
+      const columns = ["expiration", "expected_move", "iv", "dte"];
+      const result = await fetchStatistics(ctx.client, ticker, columns, ids.join(",") || "all");
+      const { rows } = statsRows(result.body, columns);
+      const match = rows.find((row) => row.expiration === ids[0]) ?? rows[0];
+      expectedMove = (match?.expected_move_abs as number | null) ?? null;
+      expectedMoveExpiry = match?.expiration ?? null;
+    } catch (error) {
+      warnings.push(
+        `--normalize sigma: per-expiry expected move lookup failed (${errorText(error)}); sigma_pos omitted`,
+      );
+    }
+  }
+  if (expectedMove === null) {
+    warnings.push(`--normalize sigma: no expected move for ${ids[0] ?? ticker}; sigma_pos omitted`);
+  }
+  return { spot, spot_as_of: spotAsOf, expected_move_abs: expectedMove, expected_move_expiry: expectedMoveExpiry, warnings };
+}
+
 async function cmdExposure(
   ctx: Context,
   ticker: string,
@@ -333,11 +395,27 @@ async function cmdExposure(
     throw new DataUnavailableError(`no ${chart} payload for ${ticker}`, { ticker });
   }
   const label = chart === "gamma_exposure" ? "GEX" : "DEX";
-  const byStrike = topRows(
-    exposure.exposure_by_strike_series.map((row) => ({ ...row })),
-    "net_exposure",
-    ctx.options.top,
+  const normalize = ctx.options.normalize ?? "none";
+  const sigma = normalize === "sigma" ? await sigmaContext(ctx, ticker, ids) : null;
+  if (sigma) warnings.push(...sigma.warnings);
+  warnings.push(
+    "net_exposure is USD per 1% move and scales with contract notional — never compare it across " +
+      "tickers without `share_of_abs_total_pct` (always included) or `--normalize sigma`",
   );
+  const absoluteTotal = exposure.exposure_by_strike_series.reduce(
+    (sum, row) => sum + Math.abs(row.net_exposure ?? 0),
+    0,
+  );
+  const enriched = exposure.exposure_by_strike_series.map((row) => {
+    const out: Record<string, unknown> = { ...row };
+    out.share_of_abs_total_pct = absoluteTotal > 0 ? round((row.net_exposure / absoluteTotal) * 100, 4) : null;
+    out.sigma_pos =
+      sigma?.spot !== null && sigma?.expected_move_abs
+        ? round((row.strike - sigma.spot) / sigma.expected_move_abs, 4)
+        : null;
+    return out;
+  });
+  const byStrike = topRows(enriched, "net_exposure", ctx.options.top);
   const byExpiry = exposure.exposure_by_expiration_series.map((row) => ({
     expiration: row.expiration_date_id,
     net_exposure: row.net_exposure,
@@ -363,6 +441,19 @@ async function cmdExposure(
       put_exposure: exposure.put_exposure,
       call_wall: exposure.call_wall,
       put_wall: exposure.put_wall,
+      normalize,
+      cross_ticker_note:
+        "net_exposure is USD per 1% move at each ticker's own contract notional — compare tickers via " +
+        "share_of_abs_total_pct (always present) or sigma_pos (--normalize sigma), never raw net_exposure",
+      share_of_abs_total_pct_note:
+        "share_of_abs_total_pct = net_exposure / Σ|net_exposure| over the fetched chain × 100 — a scale-free " +
+        "view of where the gamma sits inside one ticker",
+      spot: sigma?.spot ?? null,
+      spot_as_of: sigma?.spot_as_of ?? null,
+      expected_move_abs: sigma?.expected_move_abs ?? null,
+      expected_move_expiry: sigma?.expected_move_expiry ?? null,
+      exposure_as_of: response.result.fetched_at,
+      exposure_as_of_note: EXPOSURE_FRESHNESS_NOTE,
       wall_note:
         "call_wall / put_wall come from the inline JSON and are real even though the site's UI shows them locked",
       gamma_zero_level: byExpiry[0]?.gamma_zero_level ?? null,
@@ -375,14 +466,25 @@ async function cmdExposure(
       provenance: provenance(response.result, ctx.client, ticker, warnings),
     },
     csv: {
-      headers: ["ticker", "expiry", "strike", "call_exposure", "put_exposure", "net_exposure"],
+      headers: [
+        "ticker",
+        "expiry",
+        "strike",
+        "call_exposure",
+        "put_exposure",
+        "net_exposure",
+        "share_of_abs_total_pct",
+        "sigma_pos",
+      ],
       rows: byStrike.map((row) => [
         ticker,
         ids.join("+"),
-        row.strike,
-        row.call_exposure,
-        row.put_exposure,
-        row.net_exposure,
+        row.strike as number,
+        row.call_exposure as number,
+        row.put_exposure as number,
+        row.net_exposure as number,
+        (row.share_of_abs_total_pct as number | null) ?? null,
+        (row.sigma_pos as number | null) ?? null,
       ]),
     },
   };
@@ -569,6 +671,8 @@ async function cmdExpectedMove(
   const selected = limit > 0 ? points.slice(0, limit) : points;
   const warnings = [
     "expectedMoveConeData holds ~838 points (one per day); the cone widens with time to expiry",
+    "each point stamps a session CLOSE in America/New_York (23:59:59 ET): read `et_date`, not the UTC date of `iso` (which is one day later)",
+    "this cone is spot-anchored and re-priced on every request; use `scan`/`stats` expected_move_abs for per-expiry σ normalisation — the two agree only on an expiry's own et_date",
   ];
   return {
     payload: {
@@ -576,14 +680,23 @@ async function cmdExpectedMove(
       point_count: points.length,
       points_returned: selected.length,
       points: selected,
+      as_of: response.result.fetched_at,
+      as_of_note:
+        "the cone is recomputed server-side on every request and carries no upstream snapshot stamp — `as_of` is the local fetch time (the same ticker minutes later is a different sample)",
+      et_date_note:
+        "`et_date` is the America/New_York session date; cross-check it against `expiries` and read per-expiry EM from the cone row whose et_date equals that expiry",
+      cone_vs_per_expiry_note:
+        "two different expected moves exist: the `scan`/`stats` expected_move_abs is that expiry's own straddle IV, while this cone is spot-anchored and interpolated per day. Use `scan`/`stats` for a single expiry; the cone matches it only on the expiry's own et_date",
       expected_move_by_expiry_note:
         "per-expiry expected move / IV lives in `stats` (column expected_move, iv) — this command returns the cone",
       provenance: provenance(response.result, ctx.client, ticker, warnings),
     },
     csv: {
-      headers: ["ticker", "t", "iso", "em_amt", "em_pct", "low", "high", "avg_iv"],
+      headers: ["ticker", "et_date", "et_time", "t", "iso", "em_amt", "em_pct", "low", "high", "avg_iv"],
       rows: selected.map((point) => [
         ticker,
+        point.et_date,
+        point.et_time,
         point.t,
         point.iso,
         point.em_amt,
@@ -747,6 +860,7 @@ async function cmdScan(ctx: Context, ticker: string): Promise<{ payload: Record<
         });
         const returned = payloadExpiries(response.data);
         row.gex_expiry = returned.join(",") || String(row.expiration);
+        row.gex_as_of = response.result.fetched_at;
         if (returned.length && !returned.includes(String(row.expiration))) {
           row.expiry_fallback = true;
           warnings.push(
@@ -768,6 +882,12 @@ async function cmdScan(ctx: Context, ticker: string): Promise<{ payload: Record<
         );
       }
     }
+  }
+  if (options.withGex) {
+    warnings.push(
+      "scan --gex and `gex` request the same URL (identical cache key) — within the 60 s cache they return the " +
+        "same snapshot, but a --no-cache run samples a new one: compare each row's gex_as_of before quoting both",
+    );
   }
 
   let spot: number | null = null;
@@ -808,6 +928,7 @@ async function cmdScan(ctx: Context, ticker: string): Promise<{ payload: Record<
       expirations_scanned: scanRows.length,
       total_expiries: rows.length,
       exposure_unit: "usd_per_1pct_move",
+      exposure_as_of_note: options.withGex ? EXPOSURE_FRESHNESS_NOTE : null,
       rows: scanRows,
       sign_flips: signFlips,
       provenance: provenance(result, ctx.client, ticker, warnings),
@@ -831,6 +952,7 @@ async function cmdScan(ctx: Context, ticker: string): Promise<{ payload: Record<
         "call_wall",
         "put_wall",
         "gex_expiry",
+        "gex_as_of",
         "expiry_fallback",
       ],
       rows: scanRows.map((row) => [
@@ -851,6 +973,7 @@ async function cmdScan(ctx: Context, ticker: string): Promise<{ payload: Record<
         (row.call_wall as number | null) ?? null,
         (row.put_wall as number | null) ?? null,
         (row.gex_expiry as string | null) ?? null,
+        (row.gex_as_of as string | null) ?? null,
         row.expiry_fallback === true ? "true" : "",
       ]),
     },
