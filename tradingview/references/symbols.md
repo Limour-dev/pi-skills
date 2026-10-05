@@ -9,20 +9,29 @@ collects the unit / feed traps that produce wrong-looking numbers.
 
 `resolveSymbol(input)` in `src/symbols.ts` walks these steps in order:
 
-1. **Explicit** — `input` contains `:` → used verbatim. Or `--exchange X` was
-   passed with a bare name → `X:input`.
-2. **Alias** — `input` (uppercased) is a key in the curated `ALIASES` table.
+1. **Explicit** — `input` contains `:` → used verbatim.
+2. **Exchange filter** — `--exchange X` was passed with a bare name: the search
+   below is restricted to `X`, so `--exchange BINANCE SOL` resolves to
+   `BINANCE:SOLUSDT` instead of the non-existent `BINANCE:SOL`. Only when
+   nothing matches does it fall back to the literal `X:input` (note on stderr).
+   `--strict` / `--no-fallback` skips the search and uses `X:input` directly.
+3. **Alias** — `input` (uppercased) is a key in the curated `ALIASES` table.
    Confidence `high`, no network call.
-3. **Search** — `searchMarkets(input)` (optionally filtered by `--type`), then
-   candidates are ranked. Confidence is `high` when a hit's `symbol` matches the
-   input exactly, otherwise `medium`. Up to 4 runners-up are kept as
-   `alternatives`.
-4. **Unresolved** — `symbol: null`; pass an explicit `EXCHANGE:SYMBOL` instead.
+4. **Search** — `searchMarkets(input)` (optionally filtered by `--type` /
+   `--exchange`), then candidates are ranked. Confidence is `high` when a hit's
+   `symbol` matches the input exactly, otherwise `medium`. Up to 4 runners-up
+   are kept as `alternatives`.
+5. **Unresolved** — `symbol: null`; pass an explicit `EXCHANGE:SYMBOL` instead.
 
 Ranking (`scoreHit`) prefers, in order: an exact `id` match, an exact `symbol`
 match, a preferred exchange (`EXCHANGE_PRIORITY`), a preferred instrument type
 (`TYPE_PRIORITY`), and penalises `OTC` pink-sheet equities (a common
-autocomplete trap).
+autocomplete trap). `CRYPTOCAP:*` / `INDEX:*` are penalised hard: they publish
+derived indices (market cap, synthetic baskets), not tradeable price series, so
+a bare `SOL` can no longer silently become the ≈$71.5 bn `CRYPTOCAP:SOL`
+market cap. When a search fallback *does* land on an index, the CLI prints a
+`note:` on stderr and the output carries `unit`. Deliberate requests (an alias
+like `USDT.D`, or an explicit `CRYPTOCAP:...`) are not nagged.
 
 ### Continuous futures (`ROOT<N>!`)
 
@@ -30,15 +39,16 @@ TradingView's autocomplete strips the `1!` suffix: searching `CNH1!` returns
 `CME:CNH`. The resolver detects the `ROOT<N>!` shape, searches the root
 (`CNH`), and reconstructs `${exchange}:${root}${N}!` for every root match.
 `CNH1!` → `CME:CNH1!`, `ES1!` → `CME_MINI:ES1!`. Reconstructed symbols are
-`CNH1!` → `CME:CNH1!`, `ES1!` → `CME_MINI:ES1!`. Reconstructed symbols are
 `confidence: medium` because they are not verified by the search response.
 
 ### Resolution and fetch
 
-`candles` resolves one symbol and fetches it directly; the resolved name and how
-it was found are reported in the output as `symbol` and `resolved_from`
-(`explicit` / `alias` / `search`). Pass `--strict` to skip the search step
-(alias + explicit only). A wrong top search hit is the usual cause of
+`candles` / `indicators` resolve one symbol and fetch it directly; the resolved
+name and how it was found are reported as `symbol` / `resolved_from`
+(`explicit` / `alias` / `search`). The output also carries `symbol_kind`,
+`unit` and `volume_reliable` (see below), so a reading is never a guess. Pass
+`--strict` to skip the search step (alias + explicit only), and `--exchange X`
+to search inside one venue. A wrong top search hit is the usual cause of
 odd-looking bars — pass `EXCHANGE:SYMBOL` explicitly when in doubt.
 
 ## Built-in aliases
@@ -118,6 +128,38 @@ There is no `TVC:US2Y` — the zero-padded names (`US02Y`) are the real ones.
 | `SOLUSDT` | `BINANCE:SOLUSDT` |
 | `BTCUSDC` | `BINANCE:BTCUSDC` |
 
+Bare tickers of majors resolve to the deepest Binance USDT spot pair, so a
+price lookup can never land on `CRYPTOCAP:*` or an unrelated equity:
+
+| Alias | Symbol | Alias | Symbol |
+| --- | --- | --- | --- |
+| `BTC` | `BINANCE:BTCUSDT` | `ETH` | `BINANCE:ETHUSDT` |
+| `SOL` | `BINANCE:SOLUSDT` | `XRP` | `BINANCE:XRPUSDT` |
+| `ADA` | `BINANCE:ADAUSDT` | `DOGE` | `BINANCE:DOGEUSDT` |
+| `AVAX` | `BINANCE:AVAXUSDT` | `DOT` | `BINANCE:DOTUSDT` |
+| `LINK` | `BINANCE:LINKUSDT` | `LTC` | `BINANCE:LTCUSDT` |
+| `BCH` | `BINANCE:BCHUSDT` | `TRX` | `BINANCE:TRXUSDT` |
+| `SHIB` | `BINANCE:SHIBUSDT` | `PEPE` | `BINANCE:PEPEUSDT` |
+| `UNI` | `BINANCE:UNIUSDT` | `AAVE` | `BINANCE:AAVEUSDT` |
+| `NEAR` | `BINANCE:NEARUSDT` | `ATOM` | `BINANCE:ATOMUSDT` |
+| `FIL` | `BINANCE:FILUSDT` | `ETC` | `BINANCE:ETCUSDT` |
+| `XLM` | `BINANCE:XLMUSDT` | `ICP` | `BINANCE:ICPUSDT` |
+| `APT` | `BINANCE:APTUSDT` | `ARB` | `BINANCE:ARBUSDT` |
+| `OP` | `BINANCE:OPUSDT` | `SUI` | `BINANCE:SUIUSDT` |
+| `SEI` | `BINANCE:SEIUSDT` | `INJ` | `BINANCE:INJUSDT` |
+| `WIF` | `BINANCE:WIFUSDT` | `BONK` | `BINANCE:BONKUSDT` |
+| `FET` | `BINANCE:FETUSDT` | `TIA` | `BINANCE:TIAUSDT` |
+| `STX` | `BINANCE:STXUSDT` | `IMX` | `BINANCE:IMXUSDT` |
+| `CRV` | `BINANCE:CRVUSDT` | `ZEC` | `BINANCE:ZECUSDT` |
+| `DASH` | `BINANCE:DASHUSDT` | `XTZ` | `BINANCE:XTZUSDT` |
+| `ALGO` | `BINANCE:ALGOUSDT` | `VET` | `BINANCE:VETUSDT` |
+| `GALA` | `BINANCE:GALAUSDT` | `ENS` | `BINANCE:ENSUSDT` |
+| `LDO` | `BINANCE:LDOUSDT` | `SAND` | `BINANCE:SANDUSDT` |
+| `MANA` | `BINANCE:MANAUSDT` | | |
+
+Every target above was verified with a live daily candle request on 2026-10-05.
+Add an explicit `EXCHANGE:SYMBOL` for a different venue or quote currency.
+
 `BTCUSD` and `BTCUSDT` are different instruments on different venues; a small
 difference is normal (Tether basis + venue spread). Say which one you used.
 
@@ -141,6 +183,25 @@ difference is normal (Tether basis + venue spread). Say which one you used.
 `CME:CNH1` (no `!`) is **invalid** — the `!` is required for continuous
 contracts. `CME:CNH2!` is next month.
 
+## Units and symbol kinds
+
+Every response carries `symbol_kind` and `unit`, and `volume_reliable` says
+whether the volume can be used at all:
+
+| `unit` | Meaning | Examples |
+| --- | --- | --- |
+| `percent` | the value is a percentage | `CRYPTOCAP:*D` dominance, `TVC:USxxY` yields |
+| `usd` | a US-dollar aggregate (can be 10^10+) | `CRYPTOCAP:TOTAL*`, `CRYPTOCAP:<ticker>` market caps |
+| `price` | an exchange-quoted value; compare only within one symbol's own history | spot, futures, FX, equities |
+| `unknown` | not classified | rare autocomplete hits |
+
+`symbol_kind` is one of `crypto_dominance`, `crypto_marketcap`, `crypto_spot`,
+`crypto_futures`, `treasury_yield`, `macro_index`, `index`, `forex`, `futures`,
+`equity`, `unknown` (or `unknown_<search-type>`).
+
+`volume_reliable: false` marks `CRYPTOCAP:*`, `TVC:*` and `INDEX:*`; their
+`volume` is emitted as `null`. Do not run volume-based inference on those.
+
 ## Common exchange prefixes
 
 | Prefix | Covers |
@@ -158,13 +219,16 @@ Use `--exchange PREFIX` to force a bare name onto an exchange, or
 
 ## Gotchas
 
-- **Unit traps.** `CRYPTOCAP:*.D` values are **percent** and `TOTAL` is USD;
-  `TVC:USxxY` values are **yield percent**. Candle prices are not unit-annotated,
-  so read the alias table above before interpreting a number.
+- **Unit traps.** Read `unit` instead of guessing: `percent` for `CRYPTOCAP:*.D`
+  and `TVC:USxxY`, `usd` for `CRYPTOCAP:TOTAL*` and `CRYPTOCAP:<ticker>` market
+  caps, `price` for exchange-quoted series. `CRYPTOCAP:SOL` is a market cap in
+  USD (≈10^10), not the SOL price (≈10^2).
 - **Delayed feeds.** Anonymous futures feeds can be delayed by roughly 10
   minutes (e.g. `CME:CNH1!` in our tests). Say so when reporting bars.
-- **Bond volume sentinel.** `TVC:USxxY` can report `volume: 1e+100`. Treat it as
-  missing, never as real volume.
+- **Index volume.** `CRYPTOCAP:*`, `TVC:*` and `INDEX:*` set
+  `volume_reliable: false` and return `volume: null`, because their volume is
+  meaningless or inconsistent across timeframes. `TVC:USxxY` can otherwise
+  report the sentinel `volume: 1e+100`; never read either as real volume.
 - **Substitute feeds.** Anonymous sessions may be served by another exchange
   (`NASDAQ:AAPL` from `BATS:AAPL`) while `pro_name` keeps `NASDAQ:AAPL`.
 - **`searchMarkets('CNH1!')` ≠ `CNH1!`.** Search drops the `!`; use the alias or

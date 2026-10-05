@@ -1,11 +1,13 @@
 # tradingview
 
-Read-only **TradingView OHLCV candles** for agents and scripts, built on
+Read-only **TradingView OHLCV candles** and the **大道至简 indicator set** for
+agents and scripts, built on
 [`@mathieuc/tradingview`](https://github.com/Mathieu2301/TradingView-API) v4 and
 backed by a local **SQLite cache**.
 
 ```bash
 tradingview candles BTCUSD --tf 1D --count 30 --format table
+tradingview indicators BTCUSD --tf 1D --count 30 --select time_iso,macd,macd_hist
 ```
 
 ```
@@ -23,9 +25,35 @@ time_iso                  open      high      low       close     volume
 | Candles / OHLCV | `candles <SYM> --tf 1D --count 30` |
 | A historical window | `candles <SYM> --tf 4h --from -30d` |
 | A closed-only range | `candles <SYM> --tf 1D --from 2026-01-01 --to 2026-02-01` |
-| Bypass the cache | `candles <SYM> --no-cache` |
+| The 大道至简 indicator set | `indicators <SYM> --tf 1D --count 30` |
+| Bypass the cache | any command with `--no-cache` |
 
-That is the whole surface: `candles` (plus `version` and `help`).
+The surface is `candles`, `indicators`, plus `version` and `help`.
+
+### Indicators — the only set
+
+`indicators` computes exactly the Pine script 大道至简 set (© l834159672) with
+TradingView `ta.*` semantics, in pure Node.js (`src/indicators.ts`):
+
+- Keltner channels `ta.kc(close, 50, 2.75)` and `ta.kc(close, 50, 3.75)`;
+- Keltner channel on the low: `ta.kc(low, 50, 3.75)`;
+- `ta.ema(high, 50)` and `ta.ema(low, 50)`;
+- `ta.median(hlcc4, 200)` where `hlcc4 = (high + low + 2·close) / 4`;
+- MACD(12, 26, 9) with `hist = 2 · (macd - signal)`.
+
+No other indicator is available: **do not** add RSI, ATR, MAs, Bollinger Bands
+or KDJ. `candles` supplies price/volume context only. The command fetches 300
+extra warmup bars (configurable via `--warmup`) before the requested window so
+`median_200` and the EMAs are already fully warmed up at the left edge.
+
+### Unit and freshness metadata
+
+Every response carries `symbol_kind` (`crypto_dominance`, `treasury_yield`,
+`crypto_spot`, …), `unit` (`percent` / `usd` / `price`), `volume_reliable`,
+`as_of`, `last_bar_age` and `stale`. `CRYPTOCAP:*`, `TVC:*` and `INDEX:*` are
+derived indices: they report `volume_reliable: false` and `volume: null`, and
+`unit` tells you whether a number is a percentage, a USD market cap (10^10+) or
+a price. This removes the old need to guess from an alias table.
 
 ### Only closed bars
 
@@ -54,14 +82,18 @@ TradingView addresses instruments as `EXCHANGE:SYMBOL`. Bare names resolve
 through a curated alias table, then TradingView's autocomplete:
 
 - Crypto dominance: `USDT.D`, `BTC.D`, `ETH.D`, `TOTAL`, `TOTAL2`, `TOTAL3`
+- Major crypto tickers: `SOL`, `DOGE`, `LINK`, `XRP`, … → `BINANCE:<T>USDT`
 - Rates & macro: `US10Y`, `US2Y`, `US30Y`, `DXY`, `VIX`, `GOLD`, `WTI`, `SPX`
 - FX: `EURUSD`, `USDJPY`, `USDCNH`, `USDCNY`
-- Crypto: `BTCUSD`, `ETHUSD`, `BTCUSDT`, `SOLUSDT`
+- Crypto pairs: `BTCUSD`, `ETHUSD`, `BTCUSDT`, `SOLUSDT`
 - Continuous futures: `CNH1!`, `ES1!`, `NQ1!`, `CL1!`, `GC1!`, `ZN1!`, `6E1!`
 - Anything else: write `EXCHANGE:SYMBOL` (e.g. `BINANCE:BTCUSDT`)
 
-See [`references/symbols.md`](references/symbols.md) for the full table and the
-unit/feed traps (percent vs price, sentinel volumes, substitute feeds).
+`--exchange X` searches **inside** `X` first (`--exchange BINANCE SOL` →
+`BINANCE:SOLUSDT`) instead of forging the non-existent `BINANCE:SOL`. Autocomplete
+hits on `CRYPTOCAP:*` / `INDEX:*` are penalised, so a bare ticker cannot silently
+become a market-cap index. See [`references/symbols.md`](references/symbols.md)
+for the full table, units and traps.
 
 ## Install
 
@@ -78,19 +110,23 @@ via `node:sqlite` (unflagged since Node 22.13).
 
 ```
 bin/tradingview        bash wrapper (checks deps, runs cli.ts)
-cli.ts                 the `candles` command + cache-aware fetching
+cli.ts                 candles + indicators commands, cache-aware fetching
+src/indicators.ts      pure-Node 大道至简 indicator math
 src/cache.ts           SQLite schema, read/write, cache location
-src/symbols.ts         alias table + resolution/fallback
+src/symbols.ts         alias table, resolution/fallback, unit metadata
 src/output.ts          formats, error payloads, exit codes
-src/args.ts            flag parser
+src/select.ts          --select projection
+src/args.ts            flag parser + known-flag whitelist
 src/util.ts            timeframes, bar-close math, time parsing
 references/            symbols.md, commands.md, api.md
 scripts/smoke-test.sh  live smoke tests (npm run smoke)
+tests/                 offline unit tests (npm test)
 ```
 
 ## Development
 
 ```bash
+npm test             # offline: indicator math + CLI contracts
 npx tsc --noEmit     # type-check
 npm run smoke        # live candle requests; needs network
 ```
@@ -100,6 +136,8 @@ npm run smoke        # live candle requests; needs network
 - **Read-only.** No orders, no watchlist edits, no chart changes.
 - Anonymous access works; intraday history is shorter than with account cookies,
   and deep `--from` ranges may be truncated by the server.
+- `SERIES_ERROR` (exit 4) means the timeframe needs a paid account — retry with
+  `--tf 240` or `--tf D`.
 - Not affiliated with or endorsed by TradingView. Respect your data provider's
   terms and market-data permissions.
 - Code is GPL-3.0; documentation is CC BY-NC-SA 4.0 — same as the parent

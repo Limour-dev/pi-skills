@@ -4,7 +4,34 @@
 
 import { CliError, usageError, EXIT } from "./output.ts";
 
-/** TradingView timeframes: minutes as numbers, then D / W / M / 1S. */
+/**
+ * TradingView timeframes supported by this CLI.
+ *
+ * This list is the single source of truth for `--tf`: the help text, the parse
+ * error and `references/commands.md` all derive from it, so they can never
+ * disagree again. Only resolutions verified to work anonymously are listed;
+ * `360` / `480` / `720` minutes answer `SERIES_ERROR: custom_resolution` and
+ * `1S` answers `seconds_not_entitled` on an anonymous session, so they are not
+ * accepted here (they may work on a paid account, but the CLI refuses to
+ * advertise an unverified value).
+ */
+export const TIMEFRAMES: readonly string[] = [
+  "1",
+  "3",
+  "5",
+  "15",
+  "30",
+  "45",
+  "60",
+  "120",
+  "180",
+  "240",
+  "D",
+  "W",
+  "M",
+];
+
+/** Human-friendly aliases, mapped to the values above. */
 const TIMEFRAME_ALIASES: Record<string, string> = {
   "1m": "1",
   "3m": "3",
@@ -16,34 +43,17 @@ const TIMEFRAME_ALIASES: Record<string, string> = {
   "2h": "120",
   "3h": "180",
   "4h": "240",
-  "6h": "360",
-  "8h": "480",
-  "12h": "720",
   "1d": "D",
   "1w": "W",
   "1mo": "M",
-  "1s": "1S",
 };
 
-const VALID_TIMEFRAMES = new Set([
-  "1",
-  "3",
-  "5",
-  "15",
-  "30",
-  "45",
-  "60",
-  "120",
-  "180",
-  "240",
-  "360",
-  "480",
-  "720",
-  "D",
-  "W",
-  "M",
-  "1S",
-]);
+const VALID_TIMEFRAMES = new Set(TIMEFRAMES);
+
+/** One-line `--tf` description used by help, errors and docs. */
+export const TIMEFRAME_HELP = `${TIMEFRAMES.filter((t) => /^\d+$/.test(t)).join(" ")} (minutes), ${TIMEFRAMES.filter(
+  (t) => !/^\d+$/.test(t),
+).join(" ")}; aliases ${Object.keys(TIMEFRAME_ALIASES).join(" ")}`;
 
 export function normalizeTimeframe(raw: string | undefined, dflt = "D"): string {
   if (raw === undefined) return dflt;
@@ -51,9 +61,7 @@ export function normalizeTimeframe(raw: string | undefined, dflt = "D"): string 
   if (VALID_TIMEFRAMES.has(value)) return value;
   const alias = TIMEFRAME_ALIASES[value.toLowerCase()];
   if (alias) return alias;
-  throw usageError(
-    `unknown timeframe '${raw}'. Use minutes (1,5,15,60,240), D, W, M or aliases (1m,1h,4h,1d,1w,1mo).`,
-  );
+  throw usageError(`unknown timeframe '${raw}'. Supported: ${TIMEFRAME_HELP}.`);
 }
 
 /** Fixed bar length in seconds, or `null` for calendar months. */

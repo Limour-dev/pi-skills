@@ -32,7 +32,9 @@ const TV_ERROR_CODES: Record<string, ExitCode> = {
   NO_DATA: EXIT.notFound,
   NOT_FOUND: EXIT.notFound,
   QUOTE_ERROR: EXIT.notFound,
-  SERIES_ERROR: EXIT.notFound,
+  // A series error is a resolution/permission refusal (e.g. seconds or a
+  // custom resolution on an anonymous session), not an unknown symbol.
+  SERIES_ERROR: EXIT.auth,
   STUDY_ERROR: EXIT.auth,
   AUTH_ERROR: EXIT.auth,
   TIMEOUT: EXIT.timeout,
@@ -107,6 +109,8 @@ function tvHint(code: string): string | undefined {
       return "Symbol not found. Pass an EXCHANGE:SYMBOL, e.g. `candles BINANCE:BTCUSDT`, or check the alias table in references/symbols.md.";
     case "NO_DATA":
       return "No closed bars in the requested range. Widen the range or lower --count.";
+    case "SERIES_ERROR":
+      return "The server refused this series, usually because the timeframe needs a paid account (seconds, or 360/480/720 minutes). Retry with --tf 240 or --tf D; see references/commands.md for the supported list.";
     case "TIMEOUT":
       return "Raise --timeout, or retry: the TradingView websocket did not answer in time.";
     case "CONNECTION_ERROR":
@@ -131,7 +135,7 @@ export function detectFormat(f: Flags): Format {
 
 function scalar(v: unknown): string {
   if (v === null || v === undefined) return "";
-  if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(Number(v.toFixed(6)));
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(Number(v.toFixed(8)));
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
 }
@@ -160,8 +164,22 @@ function rowsOf(data: unknown): Record<string, unknown>[] | null {
   return null;
 }
 
-function columnsOf(rows: Record<string, unknown>[], explicit?: string[]): string[] {
-  if (explicit && explicit.length > 0) return explicit;
+/**
+ * Column order for csv/table/md.
+ *
+ * An explicit list (e.g. the candle columns, or a narrowed `--select`) is
+ * intersected with the keys actually present in the rows so a projection can
+ * never render blank columns. When there are no rows yet the explicit list is
+ * kept as the header.
+ */
+export function columnsOf(rows: Record<string, unknown>[], explicit?: string[]): string[] {
+  if (explicit && explicit.length > 0) {
+    if (rows.length === 0) return explicit;
+    const present = new Set<string>();
+    for (const row of rows) for (const key of Object.keys(row)) present.add(key);
+    const narrowed = explicit.filter((key) => present.has(key));
+    return narrowed.length > 0 ? narrowed : explicit;
+  }
   const seen: string[] = [];
   for (const row of rows) {
     for (const k of Object.keys(row)) if (!seen.includes(k)) seen.push(k);

@@ -30,6 +30,7 @@ npm run smoke                             # live smoke tests
 | Command | Data-API function |
 | --- | --- |
 | `candles` | `getCandles({symbol, timeframe, from, to, chartType?, currency?, adjustment?, session?})` |
+| `indicators` | `getCandles(...)` (same loader) + local math in `src/indicators.ts` |
 | resolution | `searchMarkets` + curated aliases (local, `src/symbols.ts`) |
 
 `TradingViewError` is the only error type; the CLI maps `error.code` to an exit
@@ -40,7 +41,8 @@ code (see `src/output.ts`).
 | Code | Meaning | CLI exit |
 | --- | --- | --- |
 | `INVALID_ARGUMENT` | Bad query, checked before connecting | 2 |
-| `SYMBOL_ERROR` / `NO_DATA` / `NOT_FOUND` / `SERIES_ERROR` | Unknown symbol / empty range / refused bars | 3 |
+| `SYMBOL_ERROR` / `NO_DATA` / `NOT_FOUND` | Unknown symbol / empty range | 3 |
+| `SERIES_ERROR` | Resolution/permission refusal (seconds, 360/480/720 minutes, …) | 4 |
 | `TIMEOUT` / `ABORTED` | Didn't answer in time / cancelled | 5 |
 | `DISCONNECTED` / `CONNECTION_ERROR` / `HTTP_ERROR` / `PROTOCOL_ERROR` / `PARSE_ERROR` | Transport / decoding | 6 |
 | `CRITICAL_ERROR` / `CALLBACK_ERROR` | Command refused | 1 |
@@ -111,13 +113,39 @@ are filtered with `isBarFinished` (`src/util.ts`) before being written.
 
 ## Timeframes and time
 
-`1S` (seconds), `1 3 5 15 30 45 60 120 180 240 360 480 720` (minutes),
-`D W M`, plus `3M 6M 12M` upstream. The CLI also accepts `1m 5m 15m 1h 4h 1d 1w 1mo`
-and validates before connecting.
+`1 3 5 15 30 45 60 120 180 240` (minutes), `D W M`, plus `1m 3m 5m 15m 30m 45m
+1h 2h 3h 4h 1d 1w 1mo` aliases. The list lives in one place — `TIMEFRAMES` /
+`TIMEFRAME_HELP` in `src/util.ts` — and feeds the help text, the parse error and
+`references/commands.md`. `360` / `480` / `720` minutes and seconds (`1S`) are
+**not** accepted: an anonymous session answers `SERIES_ERROR`
+(`custom_resolution` / `seconds_not_entitled`, exit 4). Upstream also knows
+`3M 6M 12M`, which the CLI does not expose.
 
 Candle `time` is the bar **open** time in Unix **seconds**; the CLI adds
 `time_iso` (UTC). A bar is closed when `time + length <= now` (months close at
 the next month boundary).
+
+## Indicators (`src/indicators.ts`)
+
+`indicators` is pure Node.js math over the candles the loader already returned —
+no extra TradingView call and no account. It implements exactly the 大道至简 set
+(and nothing else) with TradingView `ta.*` semantics:
+
+| Function | Semantics |
+| --- | --- |
+| `sma(v, n)` | mean of the last `n`; `na` until `n` values exist |
+| `ema(v, n)` | `alpha = 2/(n+1)`, seeded with `sma(v, n)`, then recursive |
+| `rollingMedian(v, n)` | statistical median; an even `n` averages the two middle values |
+| `trueRange(h, l, c)` | `max(h-l, |h-c[-1]|, |l-c[-1]|)`; first bar falls back to `h-l` |
+| `keltnerChannels(...)` | basis `ema(src, n)`, span `ema(ta.tr, n)`, bands `basis ± span*mult` |
+| `macd(c, 12, 26, 9)` | `macd = ema12 - ema26`, `signal = sma(macd, 9)`, `hist = 2*(macd - signal)` |
+| `hlcc4(h, l, c)` | `(h + l + 2c) / 4` |
+
+`computeDadaoZhiJian` composes them into the plot set;
+`warmupBars()` returns 300 (the default `--warmup`). The command fetches
+`count + warmup` bars, computes over all of them and returns only the requested
+window, so `median_200` / the EMAs at the left edge are already warmed up. The
+pure functions are covered offline by `tests/indicators.test.ts`.
 
 ## Maintenance checklist
 
@@ -125,11 +153,17 @@ the next month boundary).
 cd <skill-dir>
 npm install          # after cloning
 npx tsc --noEmit     # type-check
+npm test             # offline unit tests (indicators + CLI contracts)
 npm run smoke        # live candle requests; needs network
 ```
 
 - Aliases live in `src/symbols.ts` (`ALIASES`, `EXCHANGE_PRIORITY`,
   `TYPE_PRIORITY`). Verify new entries with a live candle request.
+- Timeframes are single-sourced in `TIMEFRAMES` (`src/util.ts`); help, errors and
+  `references/commands.md` must follow it.
+- Indicator math and its offline tests live in `src/indicators.ts` and
+  `tests/indicators.test.ts`; `--select`/flag/unit contracts are in
+  `tests/cli-lib.test.ts`.
 - Exit-code mapping lives in `src/output.ts` (`TV_ERROR_CODES`, `EXIT`).
 - Bar-close math and cache location live in `src/util.ts` and `src/cache.ts`.
 - The remaining upstream-reality notes (delays, sentinel volumes, substitute

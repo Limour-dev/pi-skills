@@ -11,11 +11,16 @@
  * bars are ever fetched, returned or stored — the still-forming bar is left
  * alone.
  *
+ * Two commands share that loader:
+ *   - `candles`    — raw OHLCV;
+ *   - `indicators` — the 大道至简 indicator set (src/indicators.ts), the only
+ *                    indicators this skill computes.
+ *
  * Read-only: nothing here places orders or edits any account state.
  */
 
 import { getCandles, type Candle } from "@mathieuc/tradingview/data";
-import { bool, list, num, parseArgs, str, type Flags } from "./src/args.ts";
+import { bool, list, num, parseArgs, str, unknownFlags, type Flags } from "./src/args.ts";
 import {
   defaultCachePath,
   openCache,
@@ -24,6 +29,12 @@ import {
   type Cache,
   type CacheKey,
 } from "./src/cache.ts";
+import {
+  DADAO_ZHIJIAN_PARAMS,
+  computeDadaoZhiJian,
+  warmupBars,
+  type IndicatorPoint,
+} from "./src/indicators.ts";
 import {
   CliError,
   EXIT,
@@ -34,8 +45,17 @@ import {
   usageError,
   type Format,
 } from "./src/output.ts";
-import { resolveSymbols, summarizeResolution, type Resolution } from "./src/symbols.ts";
+import { knownFields, planSelect, projectRow } from "./src/select.ts";
 import {
+  resolutionNote,
+  resolveSymbols,
+  symbolMeta,
+  summarizeResolution,
+  type Resolution,
+  type SymbolMeta,
+} from "./src/symbols.ts";
+import {
+  TIMEFRAME_HELP,
   isBarFinished,
   lastFinishedBarTime,
   normalizeTimeframe,
@@ -46,7 +66,7 @@ import {
   withRetry,
 } from "./src/util.ts";
 
-const CLI_VERSION = "2.0.0";
+const CLI_VERSION = "2.1.0";
 const LIBRARY_VERSION = "4.0.0-rc.0";
 
 // ---------------------------------------------------------------- result type
@@ -57,6 +77,8 @@ type CommandResult = {
   /** Tabular payload for csv/table/md; defaults to `json`. */
   rows?: Record<string, unknown>[];
   columns?: string[];
+  /** Field inside `json` that mirrors `rows` (projected by --select). */
+  rowsField?: string;
 };
 
 type Ctx = {
@@ -81,30 +103,74 @@ function errMessage(err: unknown): string {
   return typeof code === "string" ? `${code}: ${message}` : message;
 }
 
-function projectRow(row: Record<string, unknown>, select: string[]): Record<string, unknown> {
-  if (select.length === 0) return row;
-  const out: Record<string, unknown> = {};
-  for (const key of select) if (key in row) out[key] = row[key];
-  return out;
-}
-
+/**
+ * Apply `--select` to a finished result.
+ *
+ * Two contracts are enforced here:
+ *   1. the tabular payload (`rows` + `columns`) is projected together, so a
+ *      csv/table/md header can never carry empty columns;
+ *   2. the JSON envelope survives — only the row array (`candles[]` /
+ *      `series[]`) is trimmed, keeping symbol/coverage/cache/warnings.
+ *
+ * Unknown field names warn on stderr and fail under `--strict`, instead of
+ * silently emitting blank rows with exit 0.
+ */
 function finish(ctx: Ctx, result: CommandResult): CommandResult {
-  if (ctx.select.length > 0) {
-    const source = result.rows ?? (Array.isArray(result.json) ? (result.json as Record<string, unknown>[]) : undefined);
-    if (source) result.rows = source.map((r) => projectRow(r, ctx.select));
+  if (ctx.select.length === 0) return result;
+  const field = result.rowsField ?? "candles";
+  const rows = result.rows ?? [];
+  const envelope = (result.json ?? null) as Record<string, unknown> | null;
+  const jsonRows =
+    envelope && Array.isArray(envelope[field]) ? (envelope[field] as Record<string, unknown>[]) : undefined;
+  const known = knownFields(rows.length > 0 ? rows : jsonRows);
+  const plan = planSelect(ctx.select, known);
+
+  if (plan.unknown.length > 0) {
+    const message = `unknown --select field(s): ${plan.unknown.join(", ")}. Available: ${known.join(", ")}`;
+    if (ctx.strict) throw usageError(message);
+    process.stderr.write(`warning: ${message}\n`);
   }
+  if (plan.effective.length === 0) {
+    throw usageError(`--select matched no output field. Available: ${known.join(", ")}`);
+  }
+
+  result.rows = rows.map((row) => projectRow(row, plan.effective));
+  result.columns = plan.effective;
+  if (envelope && jsonRows) envelope[field] = jsonRows.map((row) => projectRow(row, plan.effective));
   return result;
 }
 
-function candleRow(c: Candle): Record<string, unknown> {
+function candleRow(candle: Candle, volumeReliable: boolean): Record<string, unknown> {
   return {
-    time: c.time,
-    time_iso: toIso(c.time),
-    open: round(c.open, 8),
-    high: round(c.high, 8),
-    low: round(c.low, 8),
-    close: round(c.close, 8),
-    volume: c.volume,
+    time: candle.time,
+    time_iso: toIso(candle.time),
+    open: round(candle.open, 8),
+    high: round(candle.high, 8),
+    low: round(candle.low, 8),
+    close: round(candle.close, 8),
+    volume: volumeReliable ? candle.volume : null,
+  };
+}
+
+function indicatorRow(point: IndicatorPoint): Record<string, unknown> {
+  return {
+    time: point.time,
+    time_iso: toIso(point.time),
+    kc1_mid: round(point.kc1_mid, 8),
+    kc1_upper: round(point.kc1_upper, 8),
+    kc1_lower: round(point.kc1_lower, 8),
+    ema_high: round(point.ema_high, 8),
+    ema_low: round(point.ema_low, 8),
+    kc2_mid: round(point.kc2_mid, 8),
+    kc2_upper: round(point.kc2_upper, 8),
+    kc2_lower: round(point.kc2_lower, 8),
+    kc_low_mid: round(point.kc_low_mid, 8),
+    kc_low_upper: round(point.kc_low_upper, 8),
+    kc_low_lower: round(point.kc_low_lower, 8),
+    median_200: round(point.median_200, 8),
+    macd: round(point.macd, 8),
+    macd_signal: round(point.macd_signal, 8),
+    macd_hist: round(point.macd_hist, 8),
   };
 }
 
@@ -204,7 +270,157 @@ async function loadCandles(
   return { candles: dedupeSorted(merged), cachedBefore: cached.length, fetched: fetched.length };
 }
 
+// ----------------------------------------------------------- shared loading
+
+type SeriesRequest = {
+  input: string;
+  timeframe: string;
+  count: number;
+  fromRaw?: string;
+  toRaw?: string;
+  chartType?: string;
+  currency?: string;
+  adjustment?: string;
+  noCache: boolean;
+  cachePath: string;
+  /** Extra bars fetched before the requested window for indicator warmup. */
+  warmup: number;
+};
+
+type LoadedSeries = {
+  input: string;
+  res: Resolution;
+  meta: SymbolMeta;
+  timeframe: string;
+  nowSec: number;
+  /** User-visible window start (seconds), or null when `--from` was absent. */
+  windowFrom: number | null;
+  effTo: number;
+  /** Every closed bar loaded in `[fetchFrom, effTo]`, warmup included. */
+  bars: Candle[];
+  cachedBefore: number;
+  fetched: number;
+  warnings: string[];
+  cachePath: string;
+  noCache: boolean;
+};
+
+/**
+ * Resolve a symbol and load closed bars, including `warmup` extra bars before
+ * the requested window so indicators are already at full strength there.
+ */
+async function loadSeries(ctx: Ctx, req: SeriesRequest): Promise<LoadedSeries> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  // Only closed bars are allowed. `effTo` is the newest bar that can already
+  // have completed, so the in-progress bar is never even requested.
+  const reqTo = req.toRaw ? Math.floor(parseTime(req.toRaw, "--to").getTime() / 1000) : nowSec;
+  const effTo = Math.min(reqTo, lastFinishedBarTime(nowSec, req.timeframe));
+  const step = timeframeSeconds(req.timeframe) ?? 31 * 86_400;
+
+  const windowFrom = req.fromRaw ? Math.floor(parseTime(req.fromRaw, "--from").getTime() / 1000) : null;
+  if (windowFrom !== null && windowFrom > effTo) {
+    throw new CliError(
+      `empty range for ${req.input}: --from is newer than --to (or than the newest closed bar)`,
+      EXIT.notFound,
+    );
+  }
+
+  // Without --from, ask for a window generously wider than `count` so market
+  // gaps (weekends, holidays) cannot leave us short of the requested bars.
+  const fetchCount = req.count + Math.max(0, req.warmup);
+  const fetchFrom =
+    windowFrom !== null ? windowFrom - Math.max(0, req.warmup) * step : effTo - Math.ceil(fetchCount * step * 3);
+
+  const [res] = (await resolveSymbols([req.input], {
+    exchange: str(ctx.flags, "exchange"),
+    type: str(ctx.flags, "type"),
+    noFallback: bool(ctx.flags, "no-fallback") || ctx.strict,
+  })) as Resolution[];
+  if (!res.symbol) throw new CliError(`unresolved symbol '${req.input}'`, EXIT.notFound, res.candidates);
+
+  if (!ctx.quiet) {
+    process.stderr.write(`${summarizeResolution(res)}\n`);
+    const note = resolutionNote(res);
+    if (note) process.stderr.write(`note: ${note}\n`);
+    for (const n of res.notes) process.stderr.write(`note: ${n}\n`);
+  }
+
+  const meta = symbolMeta(res.symbol, res.candidates[0]?.type);
+  const key: CacheKey = {
+    symbol: res.symbol,
+    timeframe: req.timeframe,
+    variant: [req.chartType ?? "", req.currency ?? "", req.adjustment ?? "splits", ctx.session].join("|"),
+  };
+  const options: ChartOptions = {
+    ...(req.chartType ? { chartType: req.chartType } : {}),
+    ...(req.currency ? { currency: req.currency } : {}),
+    ...(req.adjustment ? { adjustment: req.adjustment } : {}),
+  };
+
+  const warnings: string[] = [];
+  let result: LoadResult;
+  if (req.noCache) {
+    result = await loadCandles(null, key, fetchFrom, effTo, nowSec, ctx, options, warnings);
+  } else {
+    const db = openCache(req.cachePath);
+    try {
+      result = await loadCandles(db, key, fetchFrom, effTo, nowSec, ctx, options, warnings);
+    } finally {
+      db.close();
+    }
+  }
+
+  if (warnings.length > 0 && !ctx.quiet) for (const w of warnings) process.stderr.write(`warning: ${w}\n`);
+
+  // Defensive: keep the requested window and closed bars only.
+  const bars = result.candles.filter(
+    (c) => c.time >= fetchFrom && c.time <= effTo && isBarFinished(c.time, req.timeframe, nowSec),
+  );
+
+  return {
+    input: req.input,
+    res,
+    meta,
+    timeframe: req.timeframe,
+    nowSec,
+    windowFrom,
+    effTo,
+    bars,
+    cachedBefore: result.cachedBefore,
+    fetched: result.fetched,
+    warnings,
+    cachePath: req.cachePath,
+    noCache: req.noCache,
+  };
+}
+
+function cacheBlock(loaded: LoadedSeries): Record<string, unknown> {
+  return loaded.noCache
+    ? { enabled: false }
+    : { enabled: true, path: loaded.cachePath, reused: loaded.cachedBefore, fetched: loaded.fetched };
+}
+
+/** Freshness so a caller can tell "conservative" apart from "cache is stale". */
+function freshnessBlock(lastBarTime: number | null, nowSec: number, timeframe: string): Record<string, unknown> {
+  if (lastBarTime === null) return {};
+  const step = timeframeSeconds(timeframe) ?? 31 * 86_400;
+  const age = nowSec - lastBarTime;
+  return { last_bar_age: age, stale: age > step * 2 };
+}
+
+function chartOptions(ctx: Ctx): Pick<SeriesRequest, "chartType" | "currency" | "adjustment" | "noCache" | "cachePath"> {
+  return {
+    chartType: str(ctx.flags, "chart-type"),
+    currency: str(ctx.flags, "currency"),
+    adjustment: str(ctx.flags, "adjustment"),
+    noCache: bool(ctx.flags, "no-cache"),
+    cachePath: str(ctx.flags, "cache") ?? defaultCachePath(),
+  };
+}
+
 // ------------------------------------------------------------------- candles
+
+const CANDLE_COLUMNS = ["time_iso", "open", "high", "low", "close", "volume"];
 
 async function cmdCandles(ctx: Ctx): Promise<CommandResult> {
   const input = ctx.positional[0];
@@ -212,95 +428,124 @@ async function cmdCandles(ctx: Ctx): Promise<CommandResult> {
 
   const timeframe = normalizeTimeframe(str(ctx.flags, "tf") ?? str(ctx.flags, "timeframe"), "D");
   const count = Math.max(1, num(ctx.flags, "count", 100));
-  const fromRaw = str(ctx.flags, "from");
-  const toRaw = str(ctx.flags, "to");
-  const chartType = str(ctx.flags, "chart-type");
-  const currency = str(ctx.flags, "currency");
-  const adjustment = str(ctx.flags, "adjustment");
-  const newestFirst = bool(ctx.flags, "newest-first");
-  const noCache = bool(ctx.flags, "no-cache");
-  const cachePath = str(ctx.flags, "cache") ?? defaultCachePath();
 
-  const nowSec = Math.floor(Date.now() / 1000);
-  // Only closed bars are allowed. `effTo` is the newest bar that can already
-  // have completed, so the in-progress bar is never even requested.
-  const reqTo = toRaw ? Math.floor(parseTime(toRaw, "--to").getTime() / 1000) : nowSec;
-  const effTo = Math.min(reqTo, lastFinishedBarTime(nowSec, timeframe));
-
-  // Without --from, ask for a window generously wider than `count` so market
-  // gaps (weekends, holidays) cannot leave us short of the requested bars.
-  const step = timeframeSeconds(timeframe) ?? 31 * 86_400;
-  const reqFrom = fromRaw
-    ? Math.floor(parseTime(fromRaw, "--from").getTime() / 1000)
-    : effTo - Math.ceil(count * step * 3);
-  if (reqFrom > effTo) {
-    throw new CliError(
-      `empty range for ${input}: --from is newer than --to (or than the newest closed bar)`,
-      EXIT.notFound,
-    );
-  }
-
-  const [res] = (await resolveSymbols([input], {
-    exchange: str(ctx.flags, "exchange"),
-    type: str(ctx.flags, "type"),
-    noFallback: bool(ctx.flags, "no-fallback") || ctx.strict,
-  })) as Resolution[];
-  if (!res.symbol) throw new CliError(`unresolved symbol '${input}'`, EXIT.notFound, res.candidates);
-  if (!ctx.quiet) process.stderr.write(`${summarizeResolution(res)}\n`);
-
-  const key: CacheKey = {
-    symbol: res.symbol,
+  const loaded = await loadSeries(ctx, {
+    input,
     timeframe,
-    variant: [chartType ?? "", currency ?? "", adjustment ?? "splits", ctx.session].join("|"),
-  };
-  const options: ChartOptions = {
-    ...(chartType ? { chartType } : {}),
-    ...(currency ? { currency } : {}),
-    ...(adjustment ? { adjustment } : {}),
-  };
+    count,
+    fromRaw: str(ctx.flags, "from"),
+    toRaw: str(ctx.flags, "to"),
+    warmup: 0,
+    ...chartOptions(ctx),
+  });
 
-  const warnings: string[] = [];
-  let result: LoadResult;
-  if (noCache) {
-    result = await loadCandles(null, key, reqFrom, effTo, nowSec, ctx, options, warnings);
-  } else {
-    const db = openCache(cachePath);
-    try {
-      result = await loadCandles(db, key, reqFrom, effTo, nowSec, ctx, options, warnings);
-    } finally {
-      db.close();
-    }
-  }
-
-  // Defensive: keep the requested window and closed bars only.
-  const selected = result.candles
-    .filter((c) => c.time >= reqFrom && c.time <= effTo && isBarFinished(c.time, timeframe, nowSec))
-    .slice(fromRaw ? 0 : -count);
+  const selected = loaded.bars
+    .filter((c) => loaded.windowFrom === null || c.time >= loaded.windowFrom)
+    .slice(loaded.windowFrom === null ? -count : 0);
   const coverage =
     selected.length > 0
       ? { first: toIso(selected[0].time), last: toIso(selected[selected.length - 1].time) }
       : null;
 
-  const ordered = newestFirst ? [...selected].reverse() : selected;
-  const rows = ordered.map(candleRow);
-  if (warnings.length > 0 && !ctx.quiet) for (const w of warnings) process.stderr.write(`warning: ${w}\n`);
+  const ordered = bool(ctx.flags, "newest-first") ? [...selected].reverse() : selected;
+  const rows = ordered.map((c) => candleRow(c, loaded.meta.volume_reliable));
 
   return finish(ctx, {
     json: {
       input,
-      symbol: res.symbol,
-      resolved_from: res.source,
+      symbol: loaded.res.symbol,
+      resolved_from: loaded.res.source,
+      symbol_kind: loaded.meta.kind,
+      unit: loaded.meta.unit,
+      volume_reliable: loaded.meta.volume_reliable,
       timeframe,
       count: rows.length,
       coverage,
-      cache: noCache
-        ? { enabled: false }
-        : { enabled: true, path: cachePath, reused: result.cachedBefore, fetched: result.fetched },
-      ...(warnings.length > 0 ? { warnings } : {}),
+      as_of: toIso(loaded.nowSec),
+      ...freshnessBlock(selected.length > 0 ? selected[selected.length - 1].time : null, loaded.nowSec, timeframe),
+      cache: cacheBlock(loaded),
+      ...(loaded.warnings.length > 0 ? { warnings: loaded.warnings } : {}),
+      ...(loaded.res.notes.length > 0 ? { notes: loaded.res.notes } : {}),
       candles: rows,
     },
     rows,
-    columns: ["time_iso", "open", "high", "low", "close", "volume"],
+    columns: CANDLE_COLUMNS,
+  });
+}
+
+// ---------------------------------------------------------------- indicators
+
+const INDICATOR_COLUMNS = [
+  "time_iso",
+  "kc1_mid",
+  "kc1_upper",
+  "kc1_lower",
+  "ema_high",
+  "ema_low",
+  "kc2_mid",
+  "kc2_upper",
+  "kc2_lower",
+  "kc_low_mid",
+  "kc_low_upper",
+  "kc_low_lower",
+  "median_200",
+  "macd",
+  "macd_signal",
+  "macd_hist",
+];
+
+async function cmdIndicators(ctx: Ctx): Promise<CommandResult> {
+  const input = ctx.positional[0];
+  if (!input) throw usageError("indicators needs a symbol, e.g. `indicators BTCUSD --tf 1D --count 30`");
+
+  const timeframe = normalizeTimeframe(str(ctx.flags, "tf") ?? str(ctx.flags, "timeframe"), "D");
+  const count = Math.max(1, num(ctx.flags, "count", 100));
+  const warmup = Math.max(0, Math.floor(num(ctx.flags, "warmup", warmupBars())));
+
+  const loaded = await loadSeries(ctx, {
+    input,
+    timeframe,
+    count,
+    fromRaw: str(ctx.flags, "from"),
+    toRaw: str(ctx.flags, "to"),
+    warmup,
+    ...chartOptions(ctx),
+  });
+
+  const points = computeDadaoZhiJian(loaded.bars, DADAO_ZHIJIAN_PARAMS);
+  const inWindow = points.filter((_, i) => loaded.windowFrom === null || loaded.bars[i].time >= loaded.windowFrom);
+  const trimmed = loaded.windowFrom === null ? inWindow.slice(-count) : inWindow;
+  const coverage =
+    trimmed.length > 0 ? { first: toIso(trimmed[0].time), last: toIso(trimmed[trimmed.length - 1].time) } : null;
+
+  const ordered = bool(ctx.flags, "newest-first") ? [...trimmed].reverse() : trimmed;
+  const rows = ordered.map(indicatorRow);
+
+  return finish(ctx, {
+    json: {
+      input,
+      symbol: loaded.res.symbol,
+      resolved_from: loaded.res.source,
+      symbol_kind: loaded.meta.kind,
+      unit: loaded.meta.unit,
+      volume_reliable: loaded.meta.volume_reliable,
+      timeframe,
+      indicator: "dadao_zhijian",
+      indicator_title: "大道至简",
+      params: DADAO_ZHIJIAN_PARAMS,
+      warmup_bars: warmup,
+      count: rows.length,
+      coverage,
+      as_of: toIso(loaded.nowSec),
+      ...freshnessBlock(trimmed.length > 0 ? trimmed[trimmed.length - 1].time : null, loaded.nowSec, timeframe),
+      cache: cacheBlock(loaded),
+      ...(loaded.warnings.length > 0 ? { warnings: loaded.warnings } : {}),
+      ...(loaded.res.notes.length > 0 ? { notes: loaded.res.notes } : {}),
+      series: rows,
+    },
+    rows,
+    columns: INDICATOR_COLUMNS,
+    rowsField: "series",
   });
 }
 
@@ -319,17 +564,18 @@ function cmdVersion(): CommandResult {
 
 // ---------------------------------------------------------------------- help
 
-const HELP = `tradingview — read-only TradingView candles with a SQLite cache
+const HELP = `tradingview — read-only TradingView candles + the 大道至简 indicator set
 
-Usage: tradingview candles <SYMBOL> [flags]
+Usage: tradingview <command> <SYMBOL> [flags]
 
 Commands
   candles <SYM>             closed OHLCV bars (--tf, --count, --from, --to)
+  indicators <SYM>          the 大道至简 indicator set on those bars
   version                   versions and cache location
   help                      this text
 
-Candle flags
-  --tf, --timeframe TF  1 5 15 60 240 (minutes), D W M, aliases 1m 1h 4h 1d 1w 1mo (default D)
+Candle flags (shared)
+  --tf, --timeframe TF  ${TIMEFRAME_HELP} (default D)
   --count N             most recent closed bars (default 100); ignored with --from
   --from T              oldest bar (ISO, Unix seconds, or -7d / -12h / -30m)
   --to T                newest bar (default: newest closed bar)
@@ -340,17 +586,27 @@ Candle flags
   --no-cache            bypass the SQLite cache (always hit the network)
   --cache PATH          cache database location (default $TV_CACHE_DB or the XDG cache dir)
 
+Indicator flags
+  --warmup N            extra bars fetched before the window so the indicator
+                        values there are already converged (default 300)
+
 Output flags
   --format json|csv|table|md   output format (default json)
   --compact                    one-line JSON
   --select a,b,c               keep only these output fields
-  --exchange EXCHANGE          force an exchange for a bare symbol
+  --exchange EXCHANGE          search for a bare symbol inside this exchange
   --type stock|crypto|forex|... restrict symbol search to a market type
   --session regular|extended   trading session
   --timeout MS                 per-call timeout (default 15000; candles use >=20000)
-  --strict / --no-fallback     do not fall back to symbol search
+  --strict / --no-fallback     no symbol search; unknown flags/select fields error
   --quiet                      suppress the stderr resolution/warning notes
   --help                       this text
+
+Indicators
+  Only the 大道至简 set is computed: ta.kc(close, 50, 2.75), ta.kc(close, 50,
+  3.75), ta.kc(low, 50, 3.75), ta.ema(high, 50), ta.ema(low, 50),
+  ta.median(hlcc4, 200) and MACD(12, 26, 9) with hist = 2 * (macd - signal).
+  No other indicator is available.
 
 Cache
   Every request reads cached bars first, fetches only the missing older/newer
@@ -364,7 +620,8 @@ Symbols
 Examples
   tradingview candles BTCUSD --tf 1D --count 30 --format csv
   tradingview candles USDT.D --tf 4h --from -30d
-  tradingview candles BINANCE:BTCUSDT --tf 1h --count 24 --cache ~/tv.sqlite
+  tradingview indicators BTCUSD --tf 1D --count 30 --select time_iso,macd,macd_hist
+  tradingview indicators BINANCE:SOLUSDT --tf 4h --count 50 --format table
 `;
 
 // ------------------------------------------------------------------ dispatch
@@ -373,6 +630,7 @@ type CommandFn = (ctx: Ctx) => Promise<CommandResult>;
 
 const COMMANDS: Record<string, CommandFn> = {
   candles: cmdCandles,
+  indicators: cmdIndicators,
   version: async () => cmdVersion(),
 };
 
@@ -387,6 +645,14 @@ async function main(): Promise<void> {
   if (positional.length === 0 || positional[0] === "help" || bool(flags, "help")) {
     process.stdout.write(HELP);
     return;
+  }
+
+  // A mistyped flag (`--cout 30`) must not silently become the default.
+  const unknown = unknownFlags(flags);
+  if (unknown.length > 0) {
+    const message = `unknown flag(s): ${unknown.map((f) => `--${f}`).join(", ")}. Run \`tradingview help\` for the flag list.`;
+    if (bool(flags, "strict")) throw usageError(message);
+    process.stderr.write(`warning: ${message}\n`);
   }
 
   const command = positional.shift() as string;
@@ -409,8 +675,9 @@ async function main(): Promise<void> {
   };
 
   const result = await fn(ctx);
-  const payload =
-    ctx.select.length > 0 && result.rows ? result.rows : ctx.format === "json" ? result.json : result.rows ?? result.json;
+  // JSON keeps the envelope (symbol/coverage/cache/warnings); tabular formats
+  // use the projected flat rows.
+  const payload = ctx.format === "json" ? result.json : result.rows ?? result.json;
   print(payload, { format: ctx.format, compact: ctx.compact, columns: result.columns });
 }
 

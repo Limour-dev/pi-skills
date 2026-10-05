@@ -31,6 +31,49 @@ const BOOLEAN_FLAGS = new Set([
 
 const REPEATABLE = new Set(["select"]);
 
+/**
+ * Every flag the CLI understands. Anything else is a typo that would otherwise
+ * silently fall back to a default (`--cout 30` → `--count 100`), so `main()`
+ * reports it instead.
+ */
+export const KNOWN_FLAGS = new Set([
+  "adjustment",
+  "cache",
+  "chart-type",
+  "compact",
+  "count",
+  "csv",
+  "currency",
+  "exchange",
+  "format",
+  "from",
+  "help",
+  "json",
+  "md",
+  "newest-first",
+  "no-cache",
+  "no-fallback",
+  "quiet",
+  "select",
+  "session",
+  "strict",
+  "table",
+  "tf",
+  "timeframe",
+  "timeout",
+  "to",
+  "type",
+  "version",
+  "warmup",
+]);
+
+/** Flag names that are not part of `KNOWN_FLAGS`, in first-seen order. */
+export function unknownFlags(flags: Flags): string[] {
+  const out: string[] = [];
+  for (const name of flags.keys()) if (!KNOWN_FLAGS.has(name)) out.push(name);
+  return out;
+}
+
 export function parseArgs(argv: string[]): Parsed {
   const positional: string[] = [];
   const flags: Flags = new Map();

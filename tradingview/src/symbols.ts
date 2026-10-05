@@ -116,6 +116,57 @@ export const ALIASES: Record<string, string> = {
   SOLUSDT: "BINANCE:SOLUSDT",
   BTCUSDC: "BINANCE:BTCUSDC",
 
+  // --- bare crypto tickers (Binance USDT spot) ---
+  // A bare ticker like `SOL` or `LINK` must never land on `CRYPTOCAP:*`
+  // (market cap, ≈10^10) or an unrelated equity (e.g. `NASDAQ:LINK`). These
+  // point at the deepest USDT spot pair; say `EXCHANGE:SYMBOL` to override.
+  // Verified with live daily candles on 2026-10-05 (references/symbols.md).
+  BTC: "BINANCE:BTCUSDT",
+  ETH: "BINANCE:ETHUSDT",
+  SOL: "BINANCE:SOLUSDT",
+  XRP: "BINANCE:XRPUSDT",
+  ADA: "BINANCE:ADAUSDT",
+  DOGE: "BINANCE:DOGEUSDT",
+  AVAX: "BINANCE:AVAXUSDT",
+  DOT: "BINANCE:DOTUSDT",
+  LINK: "BINANCE:LINKUSDT",
+  LTC: "BINANCE:LTCUSDT",
+  BCH: "BINANCE:BCHUSDT",
+  TRX: "BINANCE:TRXUSDT",
+  SHIB: "BINANCE:SHIBUSDT",
+  PEPE: "BINANCE:PEPEUSDT",
+  UNI: "BINANCE:UNIUSDT",
+  AAVE: "BINANCE:AAVEUSDT",
+  NEAR: "BINANCE:NEARUSDT",
+  ATOM: "BINANCE:ATOMUSDT",
+  FIL: "BINANCE:FILUSDT",
+  ETC: "BINANCE:ETCUSDT",
+  XLM: "BINANCE:XLMUSDT",
+  ICP: "BINANCE:ICPUSDT",
+  APT: "BINANCE:APTUSDT",
+  ARB: "BINANCE:ARBUSDT",
+  OP: "BINANCE:OPUSDT",
+  SUI: "BINANCE:SUIUSDT",
+  SEI: "BINANCE:SEIUSDT",
+  INJ: "BINANCE:INJUSDT",
+  WIF: "BINANCE:WIFUSDT",
+  BONK: "BINANCE:BONKUSDT",
+  FET: "BINANCE:FETUSDT",
+  TIA: "BINANCE:TIAUSDT",
+  STX: "BINANCE:STXUSDT",
+  IMX: "BINANCE:IMXUSDT",
+  CRV: "BINANCE:CRVUSDT",
+  ZEC: "BINANCE:ZECUSDT",
+  DASH: "BINANCE:DASHUSDT",
+  XTZ: "BINANCE:XTZUSDT",
+  ALGO: "BINANCE:ALGOUSDT",
+  VET: "BINANCE:VETUSDT",
+  GALA: "BINANCE:GALAUSDT",
+  ENS: "BINANCE:ENSUSDT",
+  LDO: "BINANCE:LDOUSDT",
+  SAND: "BINANCE:SANDUSDT",
+  MANA: "BINANCE:MANAUSDT",
+
   // --- continuous futures front month (CME group) ---
   "CNH1!": "CME:CNH1!",
   "ES1!": "CME_MINI:ES1!",
@@ -133,7 +184,6 @@ export const ALIASES: Record<string, string> = {
 
 /** Preferred exchanges, most specific first, when several hits match. */
 const EXCHANGE_PRIORITY = [
-  "CRYPTOCAP",
   "TVC",
   "SP",
   "NASDAQ",
@@ -170,6 +220,17 @@ const TYPE_PRIORITY = [
   "spot",
 ];
 
+/**
+ * Exchanges that publish derived indices rather than tradeable prices.
+ * `CRYPTOCAP:SOL` is a total market cap in USD (≈10^10), not the SOL price
+ * (≈10^2) — the exact trap that made a bare `SOL` lookup return wrong-magnitude
+ * data. Search hits on these lose to any real exchange unless the user writes
+ * the prefix explicitly.
+ */
+export const INDEX_EXCHANGES = new Set(["CRYPTOCAP", "INDEX"]);
+
+const INDEX_PENALTY = 260;
+
 export type ResolveOptions = {
   exchange?: string;
   type?: string;
@@ -203,8 +264,12 @@ function scoreHit(hit: SearchHit, input: string, base: string): number {
   if (hit.symbol.toUpperCase() === upperBase) score += 160;
   else if (hit.symbol.toUpperCase().startsWith(upperBase)) score += 40;
 
-  const ex = EXCHANGE_PRIORITY.indexOf(hit.exchange.toUpperCase());
-  score += ex === -1 ? -20 : (EXCHANGE_PRIORITY.length - ex) * 3;
+  const exchange = hit.exchange.toUpperCase();
+  const priority = EXCHANGE_PRIORITY.indexOf(exchange);
+  score += priority === -1 ? -20 : (EXCHANGE_PRIORITY.length - priority) * 3;
+
+  // Derived indices must never silently win a price lookup (see INDEX_EXCHANGES).
+  if (INDEX_EXCHANGES.has(exchange) && !upper.startsWith(exchange)) score -= INDEX_PENALTY;
 
   const type = (hit.type ?? "").toLowerCase();
   const ti = TYPE_PRIORITY.indexOf(type);
@@ -239,15 +304,39 @@ export async function resolveSymbol(input: string, opts: ResolveOptions = {}): P
       notes: [],
     };
   } else if (opts.exchange) {
-    result = {
-      input: trimmed,
-      symbol: `${opts.exchange.toUpperCase()}:${trimmed}`,
-      source: "explicit",
-      confidence: "high",
-      alternatives: [],
-      candidates: [],
-      notes: [`exchange from --exchange ${opts.exchange}`],
-    };
+    // `--exchange X` is a candidate filter, not a hard `X:SYMBOL` forge: search
+    // inside X first (SOL → BINANCE:SOLUSDT) and only fall back to the literal
+    // `X:SYMBOL` when autocomplete has nothing on that venue.
+    const exchange = opts.exchange.toUpperCase();
+    if (opts.noFallback) {
+      result = {
+        input: trimmed,
+        symbol: `${exchange}:${trimmed}`,
+        source: "explicit",
+        confidence: "high",
+        alternatives: [],
+        candidates: [],
+        notes: [`--exchange ${exchange}: search disabled by --strict/--no-fallback`],
+      };
+    } else {
+      const searched = await searchResolve(trimmed, { ...opts, noFallback: false });
+      if (searched.symbol) {
+        result = {
+          ...searched,
+          notes: [...searched.notes, `--exchange ${exchange}: picked the best ${exchange} candidate`],
+        };
+      } else {
+        result = {
+          input: trimmed,
+          symbol: `${exchange}:${trimmed}`,
+          source: "explicit",
+          confidence: "low",
+          alternatives: searched.alternatives,
+          candidates: searched.candidates,
+          notes: [`--exchange ${exchange}: no ${exchange} candidate for '${trimmed}'; passed through as ${exchange}:${trimmed}`],
+        };
+      }
+    }
   } else {
     const alias = ALIASES[trimmed.toUpperCase()];
     if (alias) {
@@ -289,7 +378,12 @@ async function searchResolve(input: string, opts: ResolveOptions): Promise<Resol
 
   let hits: SearchHit[] = [];
   try {
-    const found = await withRetry(() => searchMarkets(queryText, opts.type ? { type: opts.type } : {}));
+    const found = await withRetry(() =>
+      searchMarkets(queryText, {
+        ...(opts.type ? { type: opts.type as never } : {}),
+        ...(opts.exchange ? { exchange: opts.exchange } : {}),
+      }),
+    );
     hits = found.filter(isSearchHit).slice(0, 12);
   } catch {
     hits = [];
@@ -363,4 +457,94 @@ export function summarizeResolution(r: Resolution): string {
   if (!r.symbol) return `${r.input}: unresolved`;
   const extra = r.alternatives.length > 0 ? ` (+${r.alternatives.length} alt)` : "";
   return `${r.input} -> ${r.symbol} [${r.source}/${r.confidence}]${extra}`;
+}
+
+// ---------------------------------------------------------------- unit metadata
+
+export type SymbolKind =
+  | "crypto_dominance"
+  | "crypto_marketcap"
+  | "crypto_spot"
+  | "crypto_futures"
+  | "treasury_yield"
+  | "macro_index"
+  | "index"
+  | "forex"
+  | "futures"
+  | "equity"
+  | string;
+
+export type SymbolUnit = "percent" | "usd" | "price" | "unknown";
+
+export type SymbolMeta = {
+  /** What the series represents. */
+  kind: SymbolKind;
+  /** How to read a value: a percentage, a USD aggregate, or a quoted price. */
+  unit: SymbolUnit;
+  /** False for derived indices, whose volume is meaningless or inconsistent. */
+  volume_reliable: boolean;
+};
+
+const CRYPTO_EXCHANGES = new Set([
+  "BINANCE",
+  "BITSTAMP",
+  "COINBASE",
+  "OKX",
+  "KRAKEN",
+  "MEXC",
+  "BYBIT",
+  "KUCOIN",
+  "CRYPTO",
+  "GATEIO",
+  "HTX",
+  "BITFINEX",
+]);
+const FX_EXCHANGES = new Set(["FX", "FX_IDC", "OANDA"]);
+const FUTURES_EXCHANGES = new Set(["CME", "CME_MINI", "COMEX", "NYMEX", "CBOT", "EUREX", "ICEUS", "BMFBOVESPA"]);
+const EQUITY_EXCHANGES = new Set(["SP", "NASDAQ", "NYSE", "AMEX", "ARCA", "CBOE", "BATS"]);
+const YIELD_SYMBOL = /^US\d{2}M?Y$/;
+
+/**
+ * Unit/semantics of a resolved symbol.
+ *
+ * `resolved_from: search` used to leave the caller guessing whether a number
+ * was a price, a percent or a USD aggregate. These fields are shipped in the
+ * output envelope so a reading no longer depends on memorising an alias table.
+ */
+export function symbolMeta(symbol: string, hitType?: string): SymbolMeta {
+  const colon = symbol.indexOf(":");
+  const exchange = (colon === -1 ? "" : symbol.slice(0, colon)).toUpperCase();
+  const base = (colon === -1 ? symbol : symbol.slice(colon + 1)).toUpperCase();
+
+  if (exchange === "CRYPTOCAP") {
+    return base.endsWith(".D")
+      ? { kind: "crypto_dominance", unit: "percent", volume_reliable: false }
+      : { kind: "crypto_marketcap", unit: "usd", volume_reliable: false };
+  }
+  if (exchange === "TVC") {
+    return YIELD_SYMBOL.test(base)
+      ? { kind: "treasury_yield", unit: "percent", volume_reliable: false }
+      : { kind: "macro_index", unit: "price", volume_reliable: false };
+  }
+  if (INDEX_EXCHANGES.has(exchange)) {
+    return { kind: "index", unit: "price", volume_reliable: false };
+  }
+  if (FX_EXCHANGES.has(exchange)) return { kind: "forex", unit: "price", volume_reliable: true };
+  if (FUTURES_EXCHANGES.has(exchange)) return { kind: "futures", unit: "price", volume_reliable: true };
+  if (CRYPTO_EXCHANGES.has(exchange)) {
+    const type = (hitType ?? "").toLowerCase();
+    const derivatives = type === "swap" || type === "futures";
+    return { kind: derivatives ? "crypto_futures" : "crypto_spot", unit: "price", volume_reliable: true };
+  }
+  if (EQUITY_EXCHANGES.has(exchange)) return { kind: "equity", unit: "price", volume_reliable: true };
+  return { kind: hitType ? `unknown_${hitType}` : "unknown", unit: "unknown", volume_reliable: true };
+}
+
+/** Explicit stderr note when a resolution lands on a derived index. */
+export function resolutionNote(r: Resolution): string | null {
+  if (!r.symbol || r.source !== "search") return null;
+  const exchange = r.symbol.slice(0, r.symbol.indexOf(":")).toUpperCase();
+  if (!INDEX_EXCHANGES.has(exchange)) return null;
+  const what = exchange === "CRYPTOCAP" ? "a market-cap/dominance index" : "a synthetic index";
+  return `${r.symbol} is ${what}, not a price series; pass an explicit EXCHANGE:SYMBOL (e.g. BINANCE:SOLUSDT) for prices.`;
 }
