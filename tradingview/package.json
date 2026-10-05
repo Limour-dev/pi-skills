@@ -1,0 +1,44 @@
+{
+  "name": "tradingview",
+  "version": "1.0.0",
+  "description": "Read-only TradingView market-data CLI on top of @mathieuc/tradingview v4: quotes, candles, live watchers, technical ratings, built-in indicators, screener/hotlist and one-step symbol resolution for USDT.D, US10Y, CNH1!, BTCUSD and thousands more.",
+  "type": "module",
+  "bin": {
+    "tradingview": "bin/tradingview"
+  },
+  "files": [
+    "SKILL.md",
+    "README.md",
+    "bin",
+    "src",
+    "cli.ts",
+    "references",
+    "scripts"
+  ],
+  "scripts": {
+    "smoke": "bash scripts/smoke-test.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "keywords": [
+    "tradingview",
+    "market-data",
+    "quotes",
+    "candles",
+    "crypto",
+    "forex",
+    "futures",
+    "bonds",
+    "cli"
+  ],
+  "license": "GPL-3.0",
+  "dependencies": {
+    "@mathieuc/tradingview": "4.0.0-rc.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  }
+}

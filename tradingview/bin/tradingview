@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# tradingview CLI wrapper — run the CLI from anywhere.
+#
+#   tradingview quote USDT.D US10Y CNH1! BTCUSD
+#   tradingview candles BTCUSD --tf 1D --count 30
+#   tradingview watch BTCUSD --duration 30
+#
+# Dependencies (the @mathieuc/tradingview library) must be installed once:
+#   (cd "$(dirname "$0")/.." && npm install)
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [ ! -d "$DIR/node_modules/@mathieuc/tradingview" ]; then
+  echo "tradingview: dependencies missing — run: (cd \"$DIR\" && npm install)" >&2
+  exit 69
+fi
+
+MAJOR="$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)"
+if [ "$MAJOR" -lt 22 ]; then
+  echo "tradingview: Node >= 22.18 required (found $(node -v 2>/dev/null || echo none)); the CLI runs TypeScript directly." >&2
+  exit 69
+fi
+
+exec node "$DIR/cli.ts" "$@"
