@@ -1,0 +1,68 @@
+=== Options Data: SPY ===
+Spot Price: $769.65
+Selected Expiration: 2026-10-05
+Updated: 2026-10-05 08:45 ET
+Available Expirations: 2026-10-05, 2026-10-06, 2026-10-07, 2026-10-08, 2026-10-09, 2026-10-12, 2026-10-13, 2026-10-14 (+24 more; pass expiration=YYYY-MM-DD)
+
+--- Key Levels ---
+  Gamma Flip: $765.79
+  Call Wall: $770 (OI 3,563)
+  Put Wall: $765 (OI 2,714)
+  Max Pain: $763
+  Min IV Strike: $773
+  Net GEX: $544.93M
+  Bullish Score: 75/100
+  Implied Move: ±$4.03 (0.52%)
+  Short-Term IV: 12.5%
+  P/C OI Ratio: 1.06
+  Total OI: Call 95,175 / Put 101,192
+  Total Vol: Call 584,474 / Put 794,443
+
+--- Insights ---
+  [GAMMA] Positive Gamma Environment: Dealers are long gamma — they buy dips and sell rips, dampening moves. Expect mean-reversion and range-bound trading.
+  [DEALER FLOW] High Put/Call OI Ratio (1.06): Put open interest dominates, indicating hedging/bearish positioning. Extreme readings can be contrarian bullish.
+  [KEY LEVELS] Max Pain @ $763.0: Spot is 0.9% above Max Pain. Gravitational pull may increase as expiry approaches.
+  [KEY LEVELS] Support $765.0 / Resistance $770.0: Put Wall at $765.0 acts as support. Call Wall at $770.0 acts as resistance. Net gamma concentration creates dealer hedging flows at these le...
+  [VOL STATUS] Expected Move (Straddle-mid): ±0.52% ($4.03): ATM straddle-mid implies a ±0.52% move by expiry. Range: $765.62 — $773.68
+
+--- GAMMA Net Exposure by Strike (nearest 40 to spot) ---
+  $750: -2.3K
+  $751: -269
+  $752: -714
+  $753: -706
+  $754: 84
+  $755: -4.8K
+  $756: -640
+  $757: -806
+  $758: -925
+  $759: -1.6K
+  $760: -4.1K
+  $761: -655
+  $762: -1.0K
+  $763: -1.6K
+  $764: -4.3K
+  $765: -3.3K
+  $766: -688
+  $767: 5.4K
+  $768: 2.0K
+  $769: 1.7K
+  $770: 16.3K
+  $771: 11.1K
+  $772: 7.8K
+  $773: 8.0K
+  $774: 8.7K
+  $775: 14.0K
+  $776: 8.4K
+  $777: 7.1K
+  $778: 2.3K
+  $779: 1.8K
+  $780: 4.6K
+  $781: 1.1K
+  $782: 538
+  $783: 319
+  $784: 723
+  $785: 457
+  $786: 700
+  $787: 1.2K
+  $788: 525
+  $789: 561

@@ -1,0 +1,42 @@
+{
+  "name": "options-gex",
+  "version": "1.0.0",
+  "description": "Zero-dependency, pure-TypeScript CLI for short-dated US option positioning from the Sell The News options dashboard: net GEX, gamma flip / zero-gamma, call & put walls, max pain, per-strike gamma and vanna/charm exposure, P/C OI, implied move and bullish score — single-expiry snapshots over a REST JSON channel with an MCP text fallback.",
+  "type": "module",
+  "bin": {
+    "options-gex": "bin/options-gex"
+  },
+  "files": [
+    "bin",
+    "src",
+    "cli.ts",
+    "references"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.ts",
+    "smoke": "bash scripts/smoke-test.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "keywords": [
+    "options",
+    "gex",
+    "gamma-exposure",
+    "gamma-flip",
+    "zero-gamma",
+    "call-wall",
+    "put-wall",
+    "max-pain",
+    "dealer-positioning",
+    "0dte",
+    "cli"
+  ],
+  "license": "GPL-3.0",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.5.4"
+  }
+}

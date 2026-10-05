@@ -1,0 +1,44 @@
+=== Options Data: SPY ===
+Spot Price: $769.65
+Selected Expiration: 2026-10-05
+Updated: 2026-10-05 08:49 ET
+Available Expirations: 2026-10-05, 2026-10-06, 2026-10-07, 2026-10-08, 2026-10-09, 2026-10-12, 2026-10-13, 2026-10-14 (+24 more; pass expiration=YYYY-MM-DD)
+
+--- Key Levels ---
+  Gamma Flip: $765.79
+  Call Wall: $770 (OI 3,563)
+  Put Wall: $765 (OI 2,714)
+  Max Pain: $763
+  Min IV Strike: $773
+  Net GEX: $544.93M
+  Bullish Score: 75/100
+  Implied Move: ±$4.03 (0.52%)
+  Short-Term IV: 12.5%
+  P/C OI Ratio: 1.06
+  Total OI: Call 95,175 / Put 101,192
+  Total Vol: Call 584,474 / Put 794,443
+
+--- Insights ---
+  [GAMMA] Positive Gamma Environment: Dealers are long gamma — they buy dips and sell rips, dampening moves. Expect mean-reversion and range-bound trading.
+  [DEALER FLOW] High Put/Call OI Ratio (1.06): Put open interest dominates, indicating hedging/bearish positioning. Extreme readings can be contrarian bullish.
+  [KEY LEVELS] Max Pain @ $763.0: Spot is 0.9% above Max Pain. Gravitational pull may increase as expiry approaches.
+  [KEY LEVELS] Support $765.0 / Resistance $770.0: Put Wall at $765.0 acts as support. Call Wall at $770.0 acts as resistance. Net gamma concentration creates dealer hedging flows at these le...
+  [VOL STATUS] Expected Move (Straddle-mid): ±0.52% ($4.03): ATM straddle-mid implies a ±0.52% move by expiry. Range: $765.62 — $773.68
+
+--- GAMMA Net Exposure by Strike (nearest 1 to spot) ---
+  $770: 16.3K
+
+--- DELTA Net Exposure by Strike (nearest 1 to spot) ---
+  $770: 88.5K
+
+--- THETA Net Exposure by Strike (nearest 1 to spot) ---
+  $770: -520.0K
+
+--- VEGA Net Exposure by Strike (nearest 1 to spot) ---
+  $770: 82.5K
+
+--- VANNA Net Exposure by Strike (nearest 1 to spot) ---
+  $770: 36.5K
+
+--- CHARM Net Exposure by Strike (nearest 1 to spot) ---
+  $770: -3.44M

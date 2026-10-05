@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# options-gex CLI wrapper — run the pure-TS option-positioning client from anywhere.
+#
+#   options-gex gex SPY --top 20
+#   options-gex flip SPY --exp 2026-10-16 --format table
+#   options-gex raw SPY --from-file tests/fixtures/spy-all-greeks.json --greeks all
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec node "$DIR/cli.ts" "$@"

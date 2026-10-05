@@ -1,0 +1,10 @@
+{
+  "ticker_required": {
+    "http_status": 400,
+    "body": {"ok": false, "error": "ticker required"}
+  },
+  "not_found": {
+    "http_status": 200,
+    "body": {"ok": false, "error": "Ticker \"ZZZZZZ\" not found"}
+  }
+}
