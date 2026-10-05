@@ -1,251 +1,113 @@
-# Command reference
+# `candles` command reference
 
 Single entry point: `<skill-dir>/bin/tradingview` (a bash wrapper around
 `node cli.ts`, runnable from any directory, no build step).
 
 ```bash
-tradingview <command> [args] [flags]
+tradingview candles <SYMBOL> [flags]
 ```
 
 stdout is JSON unless `--format csv|table|md`. Errors go to stderr as
 `{"error":{"code","message","hint"?,"details"?}}`. See `../SKILL.md` for exit
-codes.
+codes. The only other commands are `version` and `help`.
 
-## Global flags
+## Flags
 
-| Flag | Effect |
-| --- | --- |
-| `--format json\|csv\|table\|md` | Output format (default `json`; `--csv`/`--table`/`--md` shorthands) |
-| `--compact` | Single-line JSON |
-| `--select a,b,c` | Keep only these fields (flat rows) |
-| `--exchange X` | Prefix bare symbols with `X:` |
-| `--type stock\|crypto\|forex\|futures\|index\|bond\|…` | Restrict symbol search by type |
-| `--session regular\|extended` | Trading session for quotes/candles |
-| `--timeout MS` | Per-call timeout (default 15000; candles use ≥20000 internally). Transient errors, including TradingView's HTTP 429 rate limit, are retried with jittered backoff before this fails. |
-| `--strict` | No search fallback; only the resolved symbol |
-| `--no-fallback` | Alias/explicit only; never search |
-| `--raw` | Raw upstream objects (quote, info) |
-| `--quiet` | Suppress informational stderr notes (errors are still printed) |
-| `--help`, `--version` | Help / versions |
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--tf`, `--timeframe TF` | `D` | `1 3 5 15 30 45 60 120 180 240 360 480 720` (minutes), `D W M`, `1S`; aliases `1m 5m 15m 1h 4h 1d 1w 1mo` |
+| `--count N` | `100` | Most recent closed bars. Ignored when `--from` is given. |
+| `--from T` | | Oldest bar. ISO (`2026-01-31`), Unix seconds, or relative (`-7d`, `-12h`, `-30m`). |
+| `--to T` | newest closed bar | Newest bar; same formats as `--from`. |
+| `--newest-first` | | Reverse the output order. |
+| `--chart-type TYPE` | | `HeikinAshi`, `Renko`, `LineBreak`, `Kagi`, `PointAndFigure`, `Range`. |
+| `--currency CUR` | | Convert prices, e.g. `--currency EUR`. |
+| `--adjustment A` | `splits` | `splits` / `dividends` / `none`. |
+| `--no-cache` | | Bypass the SQLite cache (always hit the network, no writes). |
+| `--cache PATH` | `$TV_CACHE_DB` or the XDG cache dir | Cache database location. |
+| `--format json\|csv\|table\|md` | `json` | Output format (`--csv`/`--table`/`--md` shorthands). |
+| `--compact` | | One-line JSON. |
+| `--select a,b,c` | | Keep only these fields (flat rows). |
+| `--exchange X` | | Force an exchange for a bare symbol (`X:SYMBOL`). |
+| `--type T` | | Restrict symbol search (`stock`, `crypto`, `forex`, `futures`, `index`, `bond`, …). |
+| `--session regular\|extended` | `regular` | Trading session. |
+| `--timeout MS` | `15000` | Per-call timeout; candles use at least `20000`. Transient errors (including HTTP 429) are retried with jittered backoff. |
+| `--strict` / `--no-fallback` | | Do not fall back to symbol search; release/explicit names only. |
+| `--quiet` | | Suppress the stderr resolution/warning notes. |
+| `--help`, `--version` | | Help / versions and cache location. |
 
 Flag parsing: `--name value` or `--name=value`. Boolean flags never consume the
-next token, so `quote --raw BTCUSD` keeps `BTCUSD` positional.
+next token, so `candles --quiet BTCUSD` keeps `BTCUSD` positional.
 
-## quote
+## Output
 
-`quote <SYMBOL...>` — one row per input. Tries a single batched request, then
-falls back to per-symbol requests with candidate fallback.
-
-Row fields: `input`, `symbol`, `resolved_from`, `description`, `exchange`,
-`type`, `currency`, `last`, `change`, `change_pct`, `bid`, `ask`, `open`,
-`high`, `low`, `prev_close`, `volume`, `format`, `update_mode`, `time`,
-`time_iso`. Failures instead produce `{input, error, symbol?}`.
-
-```bash
-tradingview quote USDT.D US10Y CNH1! BTCUSD --format table
-tradingview quote AAPL MSFT NVDA --select input,last,change_pct
-tradingview quote BINANCE:BTCUSDT --raw
+```json
+{
+  "input": "BTCUSD",
+  "symbol": "BITSTAMP:BTCUSD",
+  "resolved_from": "alias",
+  "timeframe": "D",
+  "count": 2,
+  "coverage": { "first": "2026-10-02T00:00:00.000Z", "last": "2026-10-04T00:00:00.000Z" },
+  "cache": { "enabled": true, "path": "~/.cache/tradingview/candles.sqlite", "reused": 15, "fetched": 2 },
+  "candles": [
+    { "time": 1790985600, "time_iso": "2026-10-03T00:00:00.000Z",
+      "open": 84500.85, "high": 85008.25, "low": 84433.06, "close": 84746.87, "volume": 454.3093179 }
+  ]
+}
 ```
 
-If **every** input fails the command exits 3 with the rows in `error.details`;
-partial failures stay exit 0 with per-row `error`.
+- `time` is the bar **open** time in Unix **seconds**; `time_iso` is UTC.
+- `resolved_from` is `explicit` / `alias` / `search`.
+- `coverage` is the first/last returned bar; `candles` is oldest-first unless
+  `--newest-first`.
+- `cache.reused` counts bars served from SQLite in the requested window,
+  `cache.fetched` counts bars returned by the network on this call.
+- `warnings` is present only when an incremental refresh failed while cached
+  history was still usable.
 
-## candles
+For `csv`/`table`/`md` the columns are
+`time_iso, open, high, low, close, volume`.
 
-`candles <SYMBOL>` — OHLCV bars.
+## Closed bars only
 
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--tf`, `--timeframe` | `D` | `1 5 15 60 240` (minutes), `D W M 1S`; aliases `1m 5m 15m 1h 4h 1d 1w 1mo` |
-| `--count N` | 100 | Most recent bars (deep history auto-batched) |
-| `--from T` | | Oldest bar time (ISO, Unix seconds, or `-7d`/`-12h`/`-30m`); `count` ignored |
-| `--to T` | now | Newest bar time |
-| `--chart-type` | | `HeikinAshi`, `Renko`, `LineBreak`, `Kagi`, `PointAndFigure`, `Range` |
-| `--currency` | | Convert prices, e.g. `EUR` |
-| `--adjustment` | `splits` | `splits` / `dividends` / `none` |
-| `--newest-first` | | Reverse the output order |
+Only bars that have finished are requested, returned and stored. A bar is
+considered closed once a full bar length has passed since its open time
+(`time + timeframe <= now`; months close at the next month boundary). This is
+timezone-independent and never leaks the in-progress bar. Because it is
+conservative, a daily bar from an exchange that closes before its full 24 h are
+up appears at the next day boundary, not at the closing bell.
 
-JSON shape: `{input, symbol, timeframe, count, coverage:{first,last}, candles:[…]}`.
-Each candle: `time` (Unix seconds, bar open), `time_iso`, `open`, `high`, `low`,
-`close`, `volume`.
+## Cache behaviour
+
+For every `(symbol, timeframe, chart options, session)` the CLI:
+
+1. reads the cached bars in `[from, to]`;
+2. computes the missing **head** (older than the cached start) and **tail**
+   (newer than the cached end) and fetches only those;
+3. writes the fetched closed bars back (`INSERT … ON CONFLICT DO UPDATE`).
+
+A cold cache fetches the whole window once; later calls only top up the tail (and
+the head when you ask for more history). If the network fails for an incremental
+slice, the command still returns the cached bars and reports a `warning`.
+
+The store is keyed by symbol + timeframe + a variant string covering
+`chart-type`, `currency`, `adjustment` and `session`, so differently configured
+requests never share rows.
+
+## Examples
 
 ```bash
 tradingview candles BTCUSD --tf 1D --count 30 --format csv
-tradingview candles BINANCE:BTCUSDT --tf 4h --from -7d
+tradingview candles USDT.D --tf 4h --from -30d
 tradingview candles TVC:US10Y --tf W --count 52 --select time_iso,close
+tradingview candles BINANCE:BTCUSDT --tf 1h --count 24 --cache ~/tv.sqlite
+tradingview candles CRYPTOCAP:USDT.D --tf 240 --count 50 --no-cache
 ```
-
-## watch
-
-`watch <SYMBOL...>` — NDJSON stream to stdout.
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--kind quote\|candles` | `quote` | What to stream |
-| `--duration SEC` | 0 (until SIGINT) | Stop after N seconds |
-| `--max-events N` | 0 (unlimited) | Stop after N data frames |
-| `--changes-only` | | Quote kind: emit only when `last/chp/bid/ask` change |
-| `--tf`, `--count` | `1`, 50 | Candle kind only |
-
-Frames: `{"event":"start",…}`, `{"event":"quote"|"candle", ts, symbol, input, …}`,
-`{"event":"error",…}`, `{"event":"stop", events, stopped_at}`. A first quote
-frame can arrive before `bid`/`ask` are populated; later frames fill them.
-
-```bash
-tradingview watch BTCUSD --duration 20 --changes-only
-tradingview watch BINANCE:BTCUSDT --kind candles --tf 1 --duration 15
-```
-
-Always bound a watch with `--duration` or `--max-events` in automation, and
-close with SIGINT to stop early.
-
-## ta
-
-`ta <SYMBOL>` — TradingView scanner technical ratings per period
-(`1 5 15 60 240 1D 1W 1M`), each `{all, ma, other, label}`. Values are on the
-`-2 … +2` scale (`all` is the summary). `label` maps to strong sell / sell /
-neutral / buy / strong buy.
-
-```bash
-tradingview ta BTCUSD --format table
-```
-
-## indicator
-
-`indicator <SYMBOL>` — run an indicator/strategy once.
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--indicator ID` | required | `STD;RSI`, `PUB;xxxx`, `USER;xxxx`, or built-in `Volume@tv-basicstudies-241` |
-| `--tf`, `--timeframe` | `60` | |
-| `--inputs JSON` | | Pine inputs / built-in options, e.g. `{"Length":21}` |
-| `--last N` | 5 | Number of value rows |
-| `--all` | | Every value row |
-
-JSON: `{input, symbol, indicator, timeframe, candles, bars, plots:[…],
-strategy_report, values:[{time, time_iso, …plots}]}`.
-
-- **Built-in studies work anonymously** (`Volume@tv-basicstudies-241`).
-- **Pine studies need account cookies** — without them you get `STUDY_ERROR`
-  ("maximum number of studies…", exit 4). Export `TV_SESSION` + `TV_SIGNATURE`.
-- `plot_N` keys are unnamed/duplicate plots; named plots keep their names.
-
-```bash
-tradingview indicator BTCUSD --indicator Volume@tv-basicstudies-241 --tf 1D --last 3
-TV_SESSION=… TV_SIGNATURE=… tradingview indicator BTCUSD --indicator 'STD;RSI' --inputs '{"Length":21}'
-```
-
-## search
-
-`search <text>` — `searchMarkets` wrapper. Flags: `--type`, `--exchange`,
-`--country`, `--limit` (default 15), `--offset`. JSON:
-`{query, total, returned, results:[{id, symbol, exchange, description, type, currency, country}]}`.
-
-```bash
-tradingview search "offshore yuan" --type forex --limit 5
-tradingview search AAPL --exchange NASDAQ --format csv
-```
-
-## info
-
-`info <SYMBOL>` — symbol metadata: `name`, `description`, `exchange`,
-`listed_exchange`, `type`, `currency`, `timezone`, `session`, `pricescale`,
-`format`, `is_tradable`, `has_intraday`, `typespecs`. `--raw` for the full
-upstream object.
-
-```bash
-tradingview info CNH1!
-tradingview info BINANCE:BTCUSDT --select symbol,exchange,timezone,session
-```
-
-Anonymous sessions can be served by a substitute exchange — compare
-`full_name` (`CME_DL:CNH1!`) with the requested symbol (`CME:CNH1!`).
-
-## screener
-
-`screener` — one scanner page (not a live subscription).
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--market` | `america` | `america`, `crypto`, `forex`, `global`, … |
-| `--columns a,b,c` | required | Exact scanner field names; include every field used in filter/sort |
-| `--filter JSON` | | `[{"left","operation","right"}]` |
-| `--sort field:asc\|desc` | | |
-| `--range A:B` or `--limit N` | `[0,50]` | Zero-based, end-exclusive |
-| `--symbols A,B` | | Restrict to explicit symbols |
-
-JSON: `{totalCount, columns, returned, rows:[{symbol, …values}]}`.
-An invalid filter operation is `HTTP_ERROR` (exit 6). An unknown **column**
-comes back as `null` and an unknown sort field is ignored, so verify field
-names instead of trusting silence.
-
-```bash
-tradingview screener --market america \
-  --columns 'name,close,change,volume,RSI|60' \
-  --filter '[{"left":"RSI|60","operation":"less","right":30}]' \
-  --sort volume:desc --limit 20 --format table
-
-tradingview screener --market crypto \
-  --columns 'name,close,change,volume,market_cap_calc' \
-  --sort market_cap_calc:desc --limit 10
-```
-
-## hotlist
-
-`hotlist --kind gainers|losers|mostActive|volumeGainers` — scanner-ranked list.
-Flags: `--market` (default `america`), `--limit`/`--range`, `--columns`.
-Default columns: name, close, change, volume, relative_volume_10d_calc. For a
-non-`america` market the default stock filter is cleared automatically.
-
-```bash
-tradingview hotlist --kind gainers --limit 10 --format table
-tradingview hotlist --kind volumeGainers --market crypto --limit 10
-```
-
-The top `gainers` are often OTC microcaps with huge percentage moves, and
-crypto `volumeGainers` surfaces near-zero-liquidity pairs with absurd relative
-volume. Filter by market cap / volume with `screener` when that matters.
-
-## watchlists
-
-`watchlists` — read-only account watchlists. Requires `TV_SESSION` +
-`TV_SIGNATURE`; without them it exits 4. `--brief` omits the symbol arrays.
-
-JSON rows: `{id, name, symbol_count, symbols?}`. Treat names/symbols as private.
-
-## resolve
-
-`resolve <SYMBOL...>` — show how each input resolves without fetching data.
-
-| Flag | Meaning |
-| --- | --- |
-| `--verify` | Send a real quote request to the primary symbol and each alternative; report `verified:[{symbol, ok, last?/error?}]` and pick the first that works |
-| `--candidates` | Include the raw search candidates |
-| `--exchange`, `--type` | Same as global |
-
-Rows: `{input, symbol, source, confidence, alternatives, notes, candidates?, verified?}`.
-A one-line summary is also written to stderr unless `--quiet`.
-
-## aliases
-
-`aliases` — the built-in alias table as `{alias, symbol}` rows.
-
-## probe
-
-`probe` — runs a real `getQuote` and a real `searchMarkets`, returning
-`{ok, cli, library, node, credentials, checks:{quote:{ok,latency_ms,value},search:{…}}}`.
-Use it first when a command fails: it separates "network/blocked" from
-"that symbol is wrong".
-
-## version
-
-`version` — `{cli, library, node, credentials}`.
 
 ## Environment
 
 | Variable | Meaning |
 | --- | --- |
-| `TV_SESSION` (or `TV_SESSIONID`) | `sessionid` cookie |
-| `TV_SIGNATURE` (or `TV_SESSIONID_SIGN`) | `sessionid_sign` cookie |
-
-Credentials are read from the environment only; the CLI never echoes them.
+| `TV_CACHE_DB` | Cache database path (overridden by `--cache`) |
+| `XDG_CACHE_HOME` | Base for the default cache path |

@@ -2,7 +2,7 @@
  * Minimal, dependency-free CLI argument parser.
  *
  * Flags are `--name value` or `--name=value`. Flags listed in BOOLEAN_FLAGS
- * never consume the next token, so `quote --raw BTCUSD` keeps `BTCUSD` as a
+ * never consume the next token, so `candles --quiet BTCUSD` keeps `BTCUSD` as a
  * positional argument. Unknown flags followed by a non-flag token consume it.
  */
 
@@ -15,28 +15,21 @@ export type Parsed = {
 };
 
 const BOOLEAN_FLAGS = new Set([
-  "all",
-  "brief",
-  "changes-only",
   "compact",
-  "extended",
+  "csv",
   "help",
   "json",
-  "no-fallback",
-  "no-color",
-  "offline",
-  "pretty",
-  "quiet",
-  "raw",
-  "strict",
-  "verify",
-  "version",
-  "csv",
-  "table",
   "md",
+  "newest-first",
+  "no-cache",
+  "no-fallback",
+  "quiet",
+  "strict",
+  "table",
+  "version",
 ]);
 
-const REPEATABLE = new Set(["select", "symbol", "column", "field", "input"]);
+const REPEATABLE = new Set(["select"]);
 
 export function parseArgs(argv: string[]): Parsed {
   const positional: string[] = [];

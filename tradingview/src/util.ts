@@ -1,5 +1,5 @@
 /**
- * Small shared helpers: timeframe normalization, time parsing, ratings.
+ * Shared helpers: timeframe normalization, bar-close math and time parsing.
  */
 
 import { CliError, usageError, EXIT } from "./output.ts";
@@ -56,6 +56,48 @@ export function normalizeTimeframe(raw: string | undefined, dflt = "D"): string 
   );
 }
 
+/** Fixed bar length in seconds, or `null` for calendar months. */
+export function timeframeSeconds(timeframe: string): number | null {
+  if (timeframe === "M") return null;
+  if (timeframe === "D") return 86_400;
+  if (timeframe === "W") return 604_800;
+  if (timeframe === "1S") return 1;
+  const minutes = Number(timeframe);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : null;
+}
+
+
+function nextMonthStart(unixSeconds: number): number {
+  const d = new Date(unixSeconds * 1000);
+  return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) / 1000);
+}
+
+function previousMonthStart(unixSeconds: number): number {
+  const d = new Date(unixSeconds * 1000);
+  return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1) / 1000);
+}
+
+/**
+ * Whether a bar that *opened* at `time` has already closed by `now`.
+ *
+ * Timeframe-agnostic and deliberately conservative: a bar counts as closed
+ * only once a full bar length has elapsed since its open time. This never
+ * leaks the still-forming bar, even for markets whose sessions do not line up
+ * with the UTC day; the price is that a daily bar from an exchange that closes
+ * early only appears when its full 24 h have passed.
+ */
+export function isBarFinished(time: number, timeframe: string, now: number): boolean {
+  if (timeframe === "M") return nextMonthStart(time) <= now;
+  const step = timeframeSeconds(timeframe);
+  return step !== null && time + step <= now;
+}
+
+/** Latest bar open time that could already be closed at `now`. */
+export function lastFinishedBarTime(now: number, timeframe: string): number {
+  if (timeframe === "M") return previousMonthStart(now);
+  return now - (timeframeSeconds(timeframe) ?? 0);
+}
+
 /**
  * Parse a time argument. Accepts:
  *   - Unix seconds or milliseconds (digits)
@@ -96,39 +138,10 @@ export function toIso(unixSeconds: number | null | undefined): string | null {
   return new Date(unixSeconds * 1000).toISOString();
 }
 
-/** Map TradingView's -2..2 technical rating to a label. */
-export function ratingLabel(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "n/a";
-  if (value <= -1.5) return "strong sell";
-  if (value <= -0.5) return "sell";
-  if (value < 0.5) return "neutral";
-  if (value < 1.5) return "buy";
-  return "strong buy";
-}
-
 export function round(value: unknown, digits = 6): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
-}
-
-/** Run async tasks with a bounded concurrency, preserving result order. */
-export async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  worker: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    for (;;) {
-      const index = next++;
-      if (index >= items.length) return;
-      results[index] = await worker(items[index], index);
-    }
-  });
-  await Promise.all(runners);
-  return results;
 }
 
 type Coded = { code?: unknown; message?: unknown };

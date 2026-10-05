@@ -1,7 +1,7 @@
 {
   "name": "tradingview",
-  "version": "1.0.0",
-  "description": "Read-only TradingView market-data CLI on top of @mathieuc/tradingview v4: quotes, candles, live watchers, technical ratings, built-in indicators, screener/hotlist and one-step symbol resolution for USDT.D, US10Y, CNH1!, BTCUSD and thousands more.",
+  "version": "2.0.0",
+  "description": "Read-only TradingView OHLCV candle CLI on top of @mathieuc/tradingview v4, with a local SQLite cache: reads cached history, fetches only the missing older/newer bars, and stores new closed bars back. Bare names like USDT.D, US10Y, CNH1!, BTCUSD resolve automatically. Only closed bars — the in-progress bar is never fetched.",
   "type": "module",
   "bin": {
     "tradingview": "bin/tradingview"
@@ -20,13 +20,15 @@
     "typecheck": "tsc --noEmit"
   },
   "engines": {
-    "node": ">=22.18.0"
+    "node": ">=22.13.0"
   },
   "keywords": [
     "tradingview",
     "market-data",
-    "quotes",
     "candles",
+    "ohlcv",
+    "sqlite",
+    "cache",
     "crypto",
     "forex",
     "futures",

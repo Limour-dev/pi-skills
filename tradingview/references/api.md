@@ -1,19 +1,19 @@
-# Library mapping, limits and maintenance
+# Library mapping, cache internals, limits and maintenance
 
 This skill is a thin CLI over
 [`@mathieuc/tradingview`](https://github.com/Mathieu2301/TradingView-API) v4.
-It does not re-implement any protocol; every command maps to one data-API
-function. This file records what is used, the upstream limits, and how to keep
-the skill working.
+It does not re-implement any protocol: `candles` maps to one data-API function,
+and every bar it sees is persisted in SQLite. This file records what is used,
+the upstream limits, and how to keep the skill working.
 
 ## Version
 
 - Pinned dependency: `@mathieuc/tradingview@4.0.0-rc.0` (npm dist-tag `next`).
 - `4.0.0-beta.5` is the `beta` dist-tag; `latest` is still the v3 line
-  (`3.5.2`) with the old `Client` API and **no** `getCandles`/`getQuote` data
-  API. Do not install `@mathieuc/tradingview` without the prerelease tag.
-- Node ≥ 22.18 is required because the CLI runs TypeScript directly
-  (type stripping). The library itself needs Node ≥ 20.
+  (`3.5.2`) with the old `Client` API and **no** `getCandles` data API. Do not
+  install `@mathieuc/tradingview` without the prerelease tag.
+- Node ≥ 22.13 is required: the CLI runs TypeScript directly (type stripping)
+  and uses the built-in `node:sqlite` module (unflagged since 22.13).
 - ESM only, TypeScript declarations included.
 
 Upgrade:
@@ -25,26 +25,12 @@ npx tsc --noEmit                          # type-check the CLI against it
 npm run smoke                             # live smoke tests
 ```
 
-If upstream ships a breaking data-API change, the affected command usually
-fails at type-check time; the mappers in `cli.ts` are the only place to update.
-
 ## Command → function
 
 | Command | Data-API function |
 | --- | --- |
-| `quote` | `getQuotes({symbols})`, falling back to `getQuote({symbol})` per symbol |
-| `candles` | `getCandles({symbol, timeframe, count?, from?, to?, chartType?, …})` |
-| `watch --kind quote` | `watchQuotes({symbols}, {onData, onError})` |
-| `watch --kind candles` | `watchCandles({symbol, timeframe, count}, {onData, onError})` |
-| `ta` | `getTechnicalAnalysis(symbol)` |
-| `indicator` | `getIndicatorData({symbol, timeframe, indicator, inputs?})` |
-| `search` | `searchMarkets(text, {type?, exchange?, country?, offset?})` |
-| `info` | `getSymbolInfo({symbol, session?})` |
-| `screener` | `getScreener({market, columns, filter?, sort?, range?, symbols?})` |
-| `hotlist` | `getHotlist({kind, market, columns?, filter?, range?})` |
-| `watchlists` | `getWatchlists({credentials})` |
-| `resolve` / fallback | `searchMarkets` + curated aliases (local) |
-| `probe` | `getQuote` + `searchMarkets` |
+| `candles` | `getCandles({symbol, timeframe, from, to, chartType?, currency?, adjustment?, session?})` |
+| resolution | `searchMarkets` + curated aliases (local, `src/symbols.ts`) |
 
 `TradingViewError` is the only error type; the CLI maps `error.code` to an exit
 code (see `src/output.ts`).
@@ -54,81 +40,84 @@ code (see `src/output.ts`).
 | Code | Meaning | CLI exit |
 | --- | --- | --- |
 | `INVALID_ARGUMENT` | Bad query, checked before connecting | 2 |
-| `SYMBOL_ERROR` / `QUOTE_ERROR` / `NO_DATA` / `NOT_FOUND` / `SERIES_ERROR` | Unknown symbol / empty range / refused bars | 3 |
-| `STUDY_ERROR` / `AUTH_ERROR` | Pine studies need an account; cookies rejected | 4 |
+| `SYMBOL_ERROR` / `NO_DATA` / `NOT_FOUND` / `SERIES_ERROR` | Unknown symbol / empty range / refused bars | 3 |
 | `TIMEOUT` / `ABORTED` | Didn't answer in time / cancelled | 5 |
 | `DISCONNECTED` / `CONNECTION_ERROR` / `HTTP_ERROR` / `PROTOCOL_ERROR` / `PARSE_ERROR` | Transport / decoding | 6 |
-| `CRITICAL_ERROR` / `CALLBACK_ERROR` | Command refused / watcher callback threw | 1 |
+| `CRITICAL_ERROR` / `CALLBACK_ERROR` | Command refused | 1 |
 
 `error.details` keeps the raw server payload when present.
+
+## The cache
+
+`src/cache.ts` opens `node:sqlite`'s `DatabaseSync` and keeps one table:
+
+```sql
+CREATE TABLE candles (
+  symbol TEXT, timeframe TEXT, variant TEXT, time INTEGER,
+  open REAL, high REAL, low REAL, close REAL, volume REAL,
+  PRIMARY KEY (symbol, timeframe, variant, time)
+) WITHOUT ROWID;
+```
+
+- `variant` = `chart-type|currency|adjustment|session`; it keeps differently
+  configured series apart.
+- Writes are one transaction of `INSERT … ON CONFLICT(symbol,timeframe,variant,time)
+  DO UPDATE`, so overlapping head/tail fetches never duplicate rows.
+- `PRAGMA journal_mode = WAL` + `busy_timeout = 5000` let several CLI processes
+  read and write at once.
+- Default path: `$TV_CACHE_DB`, else `$XDG_CACHE_HOME/tradingview/candles.sqlite`,
+  else `~/.cache/tradingview/candles.sqlite`.
+
+`cli.ts` (`loadCandles`) reads the requested window, then fetches only the
+missing head/tail slices. A slice whose `to` exactly matches a bar open time is
+requested as `to + 1` because upstream treats `to` as exclusive. Fetched bars
+are filtered with `isBarFinished` (`src/util.ts`) before being written.
 
 ## Upstream limits (as of the 4.0.0-rc.0 docs and our tests)
 
 - **Anonymous** access is limited: in upstream tests about 7 000 one-minute
   bars; reference times (`to`) in the past are capped. History stops early
   without error when the server has no more bars.
-- **Pine studies require an account.** Without cookies every `STD;*` /
-  `PUB;*` / `USER;*` study returns `STUDY_ERROR`
-  ("maximum number of studies per chart"). Built-in studies
-  (`Volume@tv-basicstudies-241`) work anonymously.
 - **Substitute feeds.** Anonymous sessions may be served by another venue
   (`NASDAQ:AAPL` → `BATS:AAPL`) while `pro_name` keeps the requested symbol.
 - **Delays.** Futures (and possibly other feeds) can be delayed for anonymous
-  users; `update_mode: delayed_streaming_600` ≈ 10 minutes.
-- **Screener** is one HTTP page, not a streaming scanner, and does not grant
-paid entitlements. An invalid filter operation raises `HTTP_ERROR`; an unknown
-column comes back as `null` and an unknown sort field is ignored, so verify
-field names rather than trusting silence. `range` is zero-based, end-exclusive,
-default `[0, 50]`.
-- **Hotlist** is a scanner query, not an exact replica of the TradingView UI
-  widget; the universe/session/liquidity filters may differ.
-- **No auto-reconnect.** A watcher that hits a fatal error stops; `watch` prints
-  `{"event":"error"}` and exits. Start a new watch if you need continuity.
-- **Rate limiting (HTTP 429).** Every command opens its own websocket, and a
-  burst of concurrent commands makes TradingView answer excess handshakes with
-  `429`. The CLI retries transient transport errors (including 429) with an
-  exponential, jittered backoff, so a handful of parallel calls now recover
-  instead of failing outright. It also reports those failures as
-  `NETWORK_ERROR`/`TIMEOUT` (exit 6/5), not `NOT_FOUND`, so a retryable
-  connection problem is not mistaken for a bad symbol. Very large bursts can
-  still exhaust the retries — serialise if you fan out hundreds of calls.
+  users by roughly 10 minutes.
+- **Candle `to` is exclusive.** A range `[from, to]` returns bars with
+  `from <= time < to`; request `to + 1` to include a bar sitting on the edge.
+- **No auto-reconnect.** Each call opens and closes its own websocket.
+- **Rate limiting (HTTP 429).** A burst of concurrent commands makes
+  TradingView answer excess handshakes with `429`. The CLI retries transient
+  transport errors (including 429) with an exponential, jittered backoff and
+  reports them as `NETWORK_ERROR`/`TIMEOUT` (exit 6/5), not `NOT_FOUND`.
 
 ## Candle options exposed by the library
-
-`getCandles` query fields (all wired to CLI flags unless noted):
 
 | Library option | CLI flag | Default |
 | --- | --- | --- |
 | `symbol` | positional | required |
 | `timeframe` | `--tf` | `D` |
-| `count` | `--count` | 100 |
-| `from` / `to` | `--from` / `--to` | `count`-based / now |
+| `count` | `--count` | 100 (only when `--from` is absent) |
+| `from` / `to` | `--from` / `--to` | window start / newest closed bar |
 | `maxCount` | — | 20 000 |
-| `chartType` | `--chart-type` | line/regular |
+| `chartType` | `--chart-type` | regular |
 | `chartInputs` | — | |
 | `currency` | `--currency` | |
 | `session` | `--session` | `regular` |
 | `adjustment` | `--adjustment` | `splits` |
-| `backAdjustment` | — | |
-| `timezone` | — | |
-| `credentials` | env only | none |
-| `timeoutMs` | `--timeout` | 15 000 |
+| `backAdjustment`, `timezone` | — | |
+| `timeoutMs` | `--timeout` | 15 000 (candles use ≥ 20 000) |
 
 `chartType: "HeikinAshi" | "Renko" | "LineBreak" | "Kagi" | "PointAndFigure" | "Range"`.
 
-## Timeframes
+## Timeframes and time
 
 `1S` (seconds), `1 3 5 15 30 45 60 120 180 240 360 480 720` (minutes),
-`D W M`, plus `3M 6M 12M`. The CLI also accepts `1m 5m 15m 1h 4h 1d 1w 1mo`
+`D W M`, plus `3M 6M 12M` upstream. The CLI also accepts `1m 5m 15m 1h 4h 1d 1w 1mo`
 and validates before connecting.
 
-## Time and units
-
-- Candle `time` is the bar **open** time in Unix **seconds**.
-- Quote `lp_time` is Unix seconds; the CLI adds `time_iso` (UTC) everywhere.
-- `format` is the unit hint: `price`, `percent`, `volume`.
-- `lp` = last price, `ch` = change, `chp` = change %, `rch`/`rchp` =
-  pre/post-market change.
+Candle `time` is the bar **open** time in Unix **seconds**; the CLI adds
+`time_iso` (UTC). A bar is closed when `time + length <= now` (months close at
+the next month boundary).
 
 ## Maintenance checklist
 
@@ -136,15 +125,15 @@ and validates before connecting.
 cd <skill-dir>
 npm install          # after cloning
 npx tsc --noEmit     # type-check
-npm run smoke        # live commands; needs network
+npm run smoke        # live candle requests; needs network
 ```
 
 - Aliases live in `src/symbols.ts` (`ALIASES`, `EXCHANGE_PRIORITY`,
-  `TYPE_PRIORITY`). Verify new entries with `quote <SYM> --strict`.
+  `TYPE_PRIORITY`). Verify new entries with a live candle request.
 - Exit-code mapping lives in `src/output.ts` (`TV_ERROR_CODES`, `EXIT`).
+- Bar-close math and cache location live in `src/util.ts` and `src/cache.ts`.
 - The remaining upstream-reality notes (delays, sentinel volumes, substitute
-  feeds) are in `references/symbols.md`; re-verify them if TradingView changes
-  feed policy.
+  feeds) are in `references/symbols.md`.
 
 ## Attribution
 

@@ -17,8 +17,7 @@ collects the unit / feed traps that produce wrong-looking numbers.
    candidates are ranked. Confidence is `high` when a hit's `symbol` matches the
    input exactly, otherwise `medium`. Up to 4 runners-up are kept as
    `alternatives`.
-4. **Unresolved** — `symbol: null`; the caller must `search` or pass an explicit
-   symbol.
+4. **Unresolved** — `symbol: null`; pass an explicit `EXCHANGE:SYMBOL` instead.
 
 Ranking (`scoreHit`) prefers, in order: an exact `id` match, an exact `symbol`
 match, a preferred exchange (`EXCHANGE_PRIORITY`), a preferred instrument type
@@ -31,18 +30,18 @@ TradingView's autocomplete strips the `1!` suffix: searching `CNH1!` returns
 `CME:CNH`. The resolver detects the `ROOT<N>!` shape, searches the root
 (`CNH`), and reconstructs `${exchange}:${root}${N}!` for every root match.
 `CNH1!` → `CME:CNH1!`, `ES1!` → `CME_MINI:ES1!`. Reconstructed symbols are
-`confidence: medium` because they are not verified by the search response —
-`resolve CNH1! --verify` sends a real quote request to each candidate.
+`CNH1!` → `CME:CNH1!`, `ES1!` → `CME_MINI:ES1!`. Reconstructed symbols are
+`confidence: medium` because they are not verified by the search response.
 
-### Fallback at fetch time
+### Resolution and fetch
 
-`quote` and `candles` try the resolved symbol first, then each `alternative`,
-and report which one succeeded in `resolved_from` / `symbol`. This is why
-`quote SOL` still returns data even when the top search hit is an index. Pass
-`--strict` to disable fallback, or `--no-fallback` to also disable the search
-step (alias + explicit only).
+`candles` resolves one symbol and fetches it directly; the resolved name and how
+it was found are reported in the output as `symbol` and `resolved_from`
+(`explicit` / `alias` / `search`). Pass `--strict` to skip the search step
+(alias + explicit only). A wrong top search hit is the usual cause of
+odd-looking bars — pass `EXCHANGE:SYMBOL` explicitly when in doubt.
 
-## Built-in aliases (`tradingview aliases`)
+## Built-in aliases
 
 All targets below were verified against a live `getQuote` call on 2026-10-05.
 
@@ -159,17 +158,15 @@ Use `--exchange PREFIX` to force a bare name onto an exchange, or
 
 ## Gotchas
 
-- **`format` decides the unit.** Read `format` from `quote`/`info`:
-  `percent` → the number is a percentage; `price` → a price; `volume` → a USD
-  amount (crypto market cap). Do not assume every number is a price.
-- **Delayed feeds.** Quote rows carry `update_mode`. `streaming` is live;
-  `delayed_streaming_600` means roughly a 10-minute delay (common for
-  anonymous futures access, e.g. `CME:CNH1!` in our tests). Always mention it.
+- **Unit traps.** `CRYPTOCAP:*.D` values are **percent** and `TOTAL` is USD;
+  `TVC:USxxY` values are **yield percent**. Candle prices are not unit-annotated,
+  so read the alias table above before interpreting a number.
+- **Delayed feeds.** Anonymous futures feeds can be delayed by roughly 10
+  minutes (e.g. `CME:CNH1!` in our tests). Say so when reporting bars.
 - **Bond volume sentinel.** `TVC:USxxY` can report `volume: 1e+100`. Treat it as
   missing, never as real volume.
 - **Substitute feeds.** Anonymous sessions may be served by another exchange
-  (`NASDAQ:AAPL` quoted from `BATS:AAPL`) while `pro_name` keeps `NASDAQ:AAPL`.
-  `info` shows `exchange` / `listed_exchange` / `full_name`.
+  (`NASDAQ:AAPL` from `BATS:AAPL`) while `pro_name` keeps `NASDAQ:AAPL`.
 - **`searchMarkets('CNH1!')` ≠ `CNH1!`.** Search drops the `!`; use the alias or
   `EXCHANGE:CNH1!`.
 - **Some symbols look alike but differ.** `FX:USDCNH` (spot) vs `CME:CNH1!`
@@ -181,23 +178,19 @@ Use `--exchange PREFIX` to force a bare name onto an exchange, or
 
 ## Discovery
 
-```bash
-tradingview search "offshore yuan" --type forex --limit 5
-tradingview search "S&P 500" --type futures --limit 5
-tradingview info BINANCE:BTCUSDT            # exchange, session, timezone, pricescale
-tradingview aliases --format csv            # the whole built-in table
-```
-
-`searchMarkets` options exposed as flags: `--type stock|futures|forex|cfd|crypto|index|economic|bond|fund`,
-`--exchange EXCHANGE`, `--country US`, `--limit N`, `--offset N`.
+There is no standalone search command — `candles` resolves a bare name through
+`searchMarkets` internally and reports what it picked as `resolved_from` /
+`symbol`. When in doubt, write `EXCHANGE:SYMBOL` yourself. `--type` still
+filters the internal search (`stock`, `futures`, `forex`, `cfd`, `crypto`,
+`index`, `economic`, `bond`, `fund`), and `--exchange` forces a prefix.
 
 ## Adding aliases
 
 Edit `ALIASES` in `src/symbols.ts`. Keep keys uppercase and only add targets you
-verified with a live call:
+verified with a live candle request:
 
 ```bash
-tradingview quote <EXCHANGE:SYMBOL> --strict
+tradingview candles <EXCHANGE:SYMBOL> --tf 1D --count 1 --strict
 ```
 
 `--strict` skips the search fallback, so a success proves the exact symbol.

@@ -104,18 +104,14 @@ function tvHint(code: string): string | undefined {
   switch (code) {
     case "SYMBOL_ERROR":
     case "QUOTE_ERROR":
-      return "Symbol not found. Run `tradingview resolve <input>` or `tradingview search <text>` and pass an EXCHANGE:SYMBOL.";
-    case "STUDY_ERROR":
-      return "Pine studies need TradingView account cookies. Set TV_SESSION + TV_SIGNATURE, or use a built-in study id such as Volume@tv-basicstudies-241.";
-    case "AUTH_ERROR":
-      return "TradingView rejected the session cookies in TV_SESSION / TV_SIGNATURE.";
+      return "Symbol not found. Pass an EXCHANGE:SYMBOL, e.g. `candles BINANCE:BTCUSDT`, or check the alias table in references/symbols.md.";
+    case "NO_DATA":
+      return "No closed bars in the requested range. Widen the range or lower --count.";
     case "TIMEOUT":
       return "Raise --timeout, or retry: the TradingView websocket did not answer in time.";
     case "CONNECTION_ERROR":
     case "DISCONNECTED":
       return "TradingView dropped or rate-limited the connection (HTTP 429 under bursts). The CLI retries automatically; re-run if it persists.";
-    case "NO_DATA":
-      return "No bars in the requested range. Widen the range or lower --count.";
     default:
       return undefined;
   }

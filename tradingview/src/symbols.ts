@@ -8,7 +8,7 @@
  *   1. explicit    — input already contains `:` (or `--exchange` was given)
  *   2. alias       — a curated table of high-traffic macro / crypto / futures names
  *   3. search      — TradingView's symbol autocomplete, best hit first
- *   4. unresolved  — nothing matched; the caller must ask or search
+ *   4. unresolved  — nothing matched; report it and use EXCHANGE:SYMBOL
  *
  * Continuous-futures inputs (`CNH1!`, `ES1!`) are reconstructed because
  * `searchMarkets` strips the `1!` suffix and returns the plain contract root.
@@ -326,7 +326,7 @@ async function searchResolve(input: string, opts: ResolveOptions): Promise<Resol
       confidence: "low",
       alternatives: [],
       candidates: [],
-      notes: ["no symbol matched; try `tradingview search <text>`"],
+      notes: ["no symbol matched; pass an explicit EXCHANGE:SYMBOL"],
     };
   }
 

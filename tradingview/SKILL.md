@@ -1,190 +1,146 @@
 ---
 name: tradingview
 description: >-
-  Read-only TradingView market data via the `tradingview` CLI, built on the
-  @mathieuc/tradingview v4 library: quotes, OHLCV candles, live quote/candle
-  streams, multi-timeframe technical ratings, built-in indicators, screener and
-  hotlist scans, and symbol lookup. Bare names resolve automatically — USDT.D,
-  US10Y, CNH1!, BTCUSD, DXY, VIX, ES1!, AAPL. Use for 行情/报价/最新价, K线/
-  candles, BTC dominance / USDT 占比 / 加密总市值, 美债收益率 (US10Y/US2Y),
-  离岸人民币 CNH 期货, DXY/VIX/黄金/原油, 股指期货 ES/NQ, technical ratings
-  (RSI/MACD 评分), screening / 选股, live watch / 实时盯盘. Read-only: it never
-  places orders or changes account state.
+  Read-only TradingView K 线/OHLCV via the `tradingview candles` CLI, built on
+  @mathieuc/tradingview v4 with a local SQLite cache. Bare names resolve
+  automatically — USDT.D, US10Y, CNH1!, BTCUSD, DXY, VIX, ES1!, AAPL. Only
+  closed bars are returned; the in-progress bar is never fetched. Each request
+  reads cached history, fetches only the missing older/newer slices, and writes
+  new bars back for next time. Use for K线/candles/OHLCV/历史行情. Read-only:
+  it never places orders or changes account state.
 ---
 
-# tradingview (read-only)
+# tradingview candles（只读）
 
 唯一入口：`<skill-dir>/bin/tradingview`（bash wrapper，任何目录可直接调用）。
-底层是 `@mathieuc/tradingview` v4 的 data API，通过 TradingView 的 websocket /
-scanner 取数。**只读**：只做查询，不下单、不改自选股、不改图表。
+**只有 K 线一个功能**：`candles`（另有 `version`、`help`）。底层是
+`@mathieuc/tradingview` v4 的 `getCandles`，经 TradingView websocket 取数。
+**只读**：只查询，不下单、不改自选股、不改图表。
 
 ```bash
-tradingview <command> [args] [flags]
+tradingview candles <SYMBOL> [flags]
 ```
 
-stdout 输出 JSON（默认 pretty），stderr 输出错误 JSON，退出码见下。
+stdout 输出 JSON（默认 pretty，`--format csv|table|md` 可切换）；stderr 输出
+解析/警告行和错误 JSON。
 
 ## Step 1 · 环境检查
 
 ```bash
-# 首次使用前安装一次（在 skill 目录里执行）：
-cd <skill-dir> && npm install
-
-# 之后自检：真实拉一次报价 + 一次搜索
-<skill-dir>/bin/tradingview probe
+cd <skill-dir> && npm install      # 首次使用
+tradingview version                # 版本 + 缓存路径
+tradingview candles BTCUSD --tf 1D --count 5
 ```
 
-- 若提示 `dependencies missing`：先执行 `cd <skill-dir> && npm install`。
-- 若提示 Node 版本过低：需要 Node ≥ 22.18（本 CLI 直接运行 TypeScript）。
-- `probe` 的 `ok: true` 表示网络/接口可用；`credentials: false` 表示没配账号 cookie（可选）。
+- 提示 `dependencies missing`：先 `npm install`。
+- 需要 Node ≥ 22.13（直接运行 TypeScript + 内置 `node:sqlite`）。
+- 账号 cookie **可选**，只从环境变量读取（能解锁更长的分钟级历史，日线等不需要）：
+  `export TV_SESSION="..."` 和 `export TV_SIGNATURE="..."`。
 
-账号 cookie 是**可选**的，通过环境变量提供，不要写进文件、issue 或 prompt：
-
-```bash
-export TV_SESSION="..."      # sessionid cookie
-export TV_SIGNATURE="..."    # sessionid_sign cookie
-```
-
-## Step 2 · 先搞清楚标的（本 skill 的核心）
-
-TradingView 的标的一定是 `EXCHANGE:SYMBOL`。本 CLI 会自动把裸名解析成候选：
-
-1. **显式**：输入已含 `:`（`BINANCE:BTCUSDT`），或加了 `--exchange BINANCE`。
-2. **别名**：内置高频宏观看板名（见下）。
-3. **搜索**：调用 TradingView 自动补全，取最匹配的一条，其余作为 fallback。
-4. 否则返回 `symbol: null`，必须改用 `search` 或显式 `EXCHANGE:SYMBOL`。
+## Step 2 · 取 K 线
 
 ```bash
-tradingview resolve USDT.D US10Y CNH1! BTCUSD   # 看解析结果（stderr 也会打印一行摘要）
-tradingview resolve CNH1! --verify              # 逐个候选真发一次请求，确认哪个能取到
-tradingview search "offshore yuan" --limit 5    # 解析不了时自己找
-```
-
-常用别名（完整表见 `references/symbols.md`，或 `tradingview aliases`）：
-
-| 裸名 | 解析为 | 含义 / 单位 |
-| --- | --- | --- |
-| `USDT.D` | `CRYPTOCAP:USDT.D` | USDT 市占率，**百分比**（不是价格） |
-| `BTC.D` / `ETH.D` | `CRYPTOCAP:BTC.D` … | 市占率，百分比 |
-| `TOTAL` / `TOTAL2` / `TOTAL3` | `CRYPTOCAP:TOTAL…` | 加密总市值（美元） |
-| `US10Y` / `US2Y` / `US30Y` | `TVC:US10Y` … | 美债收益率，百分比 |
-| `DXY` / `VIX` | `TVC:DXY` / `TVC:VIX` | 美元指数 / 波动率 |
-| `GOLD` / `WTI` | `TVC:GOLD` / `TVC:USOIL` | 现货金 / WTI |
-| `CNH1!` | `CME:CNH1!` | 离岸人民币期货（连续，前月） |
-| `USDCNH` | `FX:USDCNH` | 离岸人民币**现货** |
-| `EURUSD` / `USDJPY` | `FX:EURUSD` … | 外汇现货 |
-| `BTCUSD` | `BITSTAMP:BTCUSD` | 比特币现货（Bitstamp） |
-| `BTCUSDT` | `BINANCE:BTCUSDT` | 比特币现货（Binance，USDT 计价） |
-| `ES1!` / `NQ1!` / `CL1!` / `GC1!` | `CME_MINI:ES1!` … | 连续期货前月 |
-
-**解析的坑**
-
-- `!` 连续期货：TradingView 搜索会返回不带 `!` 的合约根（`CNH1!` → `CME:CNH`），
-  解析器据根名重建 `CME:CNH1!`。`resolve CNH1! --verify` 可确认。
-- 一个裸名可能命中多个交易所（`SOL` → `CRYPTOCAP:SOL`、`CME:SOL`…）。
-  想要可交易的币种对，直接写 `BINANCE:SOLUSDT`。`--exchange` 只做前缀拼接，
-  `--exchange BINANCE SOL` 会得到不存在的 `BINANCE:SOL`。
-- 别猜交易所：拿不准就先 `search` 找到完整的 `EXCHANGE:SYMBOL`，后续命令直接用它。
-
-## Step 3 · 取数
-
-| 需求 | 命令 |
-| --- | --- |
-| 最新价 / 涨跌幅 / 买卖价 | `quote USDT.D US10Y CNH1! BTCUSD` |
-| K 线 | `candles BTCUSD --tf 1D --count 30` |
-| 实时盯盘 | `watch BTCUSD --duration 30 --changes-only` |
-| 多周期技术评分 | `ta BTCUSD` |
-| 指标 | `indicator BTCUSD --indicator 'Volume@tv-basicstudies-241'` |
-| 找标的 | `search "nvidia"` |
-| 标的元数据 | `info USDT.D` |
-| 选股 / 扫描 | `screener --columns 'name,close,change,volume' --sort volume:desc` |
-| 涨跌榜 | `hotlist --kind gainers` |
-| 自选股（需 cookie） | `watchlists --brief` |
-| 连通性自检 | `probe` |
-
-最常用四条：
-
-```bash
-# 1) 四大宏观/加密标的一次拿全
-tradingview quote USDT.D US10Y CNH1! BTCUSD --format table
-
-# 2) 日线最近 30 根，CSV 直接进表格
 tradingview candles BTCUSD --tf 1D --count 30 --format csv
-
-# 3) 盯 20 秒报价，只在变化时输出（NDJSON）
-tradingview watch BTCUSD BINANCE:ETHUSDT --duration 20 --changes-only
-
-# 4) 多周期技术面
-tradingview ta BTCUSD --format table
+tradingview candles USDT.D --tf 4h --from -30d
+tradingview candles TVC:US10Y --tf W --count 52 --select time_iso,close
+tradingview candles BINANCE:BTCUSDT --tf 1h --count 24 --cache ~/tv.sqlite
 ```
 
-`--format json|csv|table|md` 切换输出；`--select a,b,c` 只保留字段；
-`--compact` 单行 JSON；`--timeout MS` 放宽超时；`--strict` 关闭搜索兜底。
+| flag | 默认 | 含义 |
+| --- | --- | --- |
+| `--tf`, `--timeframe` | `D` | `1 5 15 60 240`（分钟）、`D W M`，别名 `1m 1h 4h 1d 1w 1mo` |
+| `--count N` | 100 | 最近 N 根**已收盘** K 线；给了 `--from` 时忽略 |
+| `--from T` / `--to T` | | ISO（`2026-01-31`）、Unix 秒、或 `-7d`/`-12h`/`-30m` |
+| `--newest-first` | | 倒序输出 |
+| `--chart-type` | | `HeikinAshi`、`Renko`、`LineBreak`、`Kagi`、`PointAndFigure`、`Range` |
+| `--currency` / `--adjustment` | `splits` | 价格换算 / `splits`、`dividends`、`none` |
+| `--no-cache` / `--cache PATH` | | 绕过缓存 / 指定缓存库 |
+| `--format json\|csv\|table\|md`、`--compact`、`--select a,b,c` | | 输出整形 |
+| `--exchange X`、`--type T`、`--strict` | | 标的解析控制（见 Step 4） |
 
-## Step 4 · 读数与讲解（最重要）
+输出结构：`{input, symbol, resolved_from, timeframe, count, coverage, cache, candles}`；
+`cache` 给出 `reused`（缓存命中）与 `fetched`（本次联网取到）。每根 K 线是
+`{time, time_iso, open, high, low, close, volume}`，`time` 为 bar 开盘时间的
+Unix 秒、`time_iso` 为 UTC。
 
-1. **先看单位和类型再报数**。`quote` 行里的 `format` 字段：`percent` 表示百分比，
-   `price` 表示价格，空表示未声明。
-   - `CRYPTOCAP:*` 的 `*.D` 是**百分比**；`TOTAL` 是美元。
-   - `TVC:US10Y` 是**收益率百分比**（`5.33` = 5.33%）。
-   - `TVC:US03M` 是贴现价（≈99），收益率是 `TVC:US03MY`；别名 `US3M` 已指向后者。
-   - 债券类 `volume` 可能是哨兵值 `1e+100`，**不要当作成交量**。
-   - `FX:USDCNH` 是现货，`CME:CNH1!` 是期货，两者有基差，别混着比。
-2. **看延迟**。报价行带 `update_mode`：`streaming` 是实时；`delayed_streaming_600`
-   等表示延迟（匿名访问下部分期货延迟约 10 分钟）。报数时说清「延迟/实时」。
-3. **看解析来源**。报价行带 `resolved_from`（`alias` / `explicit` / `search`）；
-   若是 `search` 且不是你要的那个交易所，换显式 `EXCHANGE:SYMBOL` 重取。
-4. **K 线时间**是 bar 开盘时间的 Unix 秒，输出里已附 `time_iso`（UTC）。
-5. **匿名访问有限制**（见 Step 5）；数字取不到就如实说，不要编。
+## Step 3 · 只取已收盘的 K 线
 
-## Step 5 · 匿名 vs 账号
+正在生成的那根永远不请求、不返回、不缓存。判定规则与交易所时区无关：
 
-默认匿名可用：报价、K 线、内置指标、screener、TA 评分。
-匿名限制（有 cookie 会缓解）：
-
-- 分钟级历史较短（我们的测试约为 ~7000 根 1 分钟），过去的 `to` 会被截断；
-- **Pine 指标/策略需要账号**：`STD;RSI` 这类会返回 `STUDY_ERROR`
-  （"maximum number of studies…"）。匿名只能用内置 study，例如
-  `Volume@tv-basicstudies-241`；
-- 可能被换成替代 feed（例如 `NASDAQ:AAPL` 由 `BATS:AAPL` 服务）；
-- 部分期货 feed 延迟。
-
-设置 `TV_SESSION` + `TV_SIGNATURE` 后，`indicator --indicator 'STD;RSI'` 与
-更长历史即可用。凭证只从环境变量读取，`info`/`quote` 都不会回显 cookie。
-
-## Step 6 · 诊断
-
-```bash
-tradingview probe                       # 一次真实 quote + 一次真实 search，含延迟
-tradingview resolve <SYM> --verify      # 逐个候选实际请求，定位 no_such_symbol
-tradingview info <SYM>                  # 交易所、session、时区、pricesscale
 ```
+一根 K 线已收盘  <=>  time + K线长度 <= now        （月线 = 下一个月初）
+```
+
+因此日线在交易所收盘后要等满 24 小时才出现（保守，宁可晚一点也不返回未走完的
+K 线）。日线只到昨天，小时线只到上一个整点。
+
+## Step 4 · SQLite 缓存
+
+每次请求都走缓存：
+
+1. 从 SQLite 读出 `[from, to]` 已缓存的 K 线；
+2. 算出缺的**前面**（比缓存起点更早的历史）和**后面**（比缓存终点更新的新 K 线），
+   只联网补这些片段；
+3. 把取到的已收盘 K 线写回（`INSERT … ON CONFLICT DO UPDATE`）。
+
+冷启动一次取整段，之后只补新尾巴；请求更长历史时才补前段。增量刷新失败但缓存里
+有可用数据时，仍返回缓存内容并在 `warnings` 里说明。
+
+缓存位置：`$TV_CACHE_DB` → `$XDG_CACHE_HOME/tradingview/candles.sqlite`
+→ `~/.cache/tradingview/candles.sqlite`；`--cache PATH` 单次覆盖，`--no-cache`
+完全绕过。按 `(symbol, timeframe, 图表选项, session)` 分行存储，不同配置不会串。
+
+## Step 5 · 标的解析
+
+TradingView 的标的一定是 `EXCHANGE:SYMBOL`。裸名按顺序解析：显式（含 `:` 或
+`--exchange`）→ 内置别名 → TradingView 自动补全。输出里的 `resolved_from`
+标明来源（`explicit`/`alias`/`search`）。
+
+常用别名（完整表见 `references/symbols.md`）：
+
+| 裸名 | 解析为 | 含义 |
+| --- | --- | --- |
+| `USDT.D` / `BTC.D` | `CRYPTOCAP:USDT.D` … | 市占率，**百分比** |
+| `TOTAL` / `TOTAL2` | `CRYPTOCAP:TOTAL…` | 加密总市值（美元） |
+| `US10Y` / `US2Y` | `TVC:US10Y` … | 美债收益率，**百分比** |
+| `DXY` / `VIX` / `GOLD` / `WTI` | `TVC:…` | 美元指数 / 波动率 / 金 / 油 |
+| `CNH1!` | `CME:CNH1!` | 离岸人民币期货（连续） |
+| `BTCUSD` / `BTCUSDT` | `BITSTAMP:BTCUSD` / `BINANCE:BTCUSDT` | 比特币现货 |
+| `ES1!` / `NQ1!` / `CL1!` / `GC1!` | `CME_MINI:…` 等 | 连续期货前月 |
+
+拿不准就写显式 `EXCHANGE:SYMBOL`（例如 `BINANCE:SOLUSDT`）；`--strict` 关闭
+搜索兜底。没有独立的搜索命令。
+
+## Step 6 · 读数与讲解
+
+1. **先看单位和类型**：`CRYPTOCAP:*.D` 是百分比，`TOTAL` 是美元，`TVC:USxxY`
+   是收益率百分比。K 线不带 `format`，按上面的别名表判断。
+2. **看解析来源**：`resolved_from` 为 `search` 且交易所不对时，改用显式
+   `EXCHANGE:SYMBOL`。
+3. **债券成交量哨兵**：`TVC:USxxY` 的 `volume` 可能是 `1e+100`，当作缺失。
+4. **匿名限制**：分钟级历史较短，过去的 `--from` 可能被截断；如实说明，不要编数。
 
 ## 退出码
 
-| code | 含义 | 典型错误 `code` |
+| code | 含义 | 典型 `code` |
 | --- | --- | --- |
-| 0 | 成功（含部分行为成功的批量查询） | — |
+| 0 | 成功 | — |
 | 1 | 其他运行错误 | `CRITICAL_ERROR` |
 | 2 | 用法错误 | `USAGE` / `INVALID_ARGUMENT` |
-| 3 | 标的找不到 / 无数据 | `SYMBOL_ERROR` `QUOTE_ERROR` `NO_DATA` |
-| 4 | 需要账号或凭证被拒 | `STUDY_ERROR` `AUTH_ERROR` |
-| 5 | 超时 / 被取消 | `TIMEOUT` `ABORTED` |
-| 6 | 网络 / 协议 / 解析 | `HTTP_ERROR` `DISCONNECTED` … |
-
-批量 `quote` 里单个标的失败会在该行输出 `error` 字段且整体仍退出 0；
-**全部**失败才退出 3。`watch` 的 NDJSON 里错误是 `{"event":"error",...}`。
+| 3 | 标的找不到 / 该区间无已收盘 K 线 | `SYMBOL_ERROR` / `NO_DATA` |
+| 5 | 超时 / 被取消 | `TIMEOUT` / `ABORTED` |
+| 6 | 网络 / 协议 / 解析 | `HTTP_ERROR` / `DISCONNECTED` |
+| 69 | 缺依赖 / Node 版本过低 | — |
 
 ## Guardrails
 
 - **只读**。不要说能下单、改自选股、改图表。
-- **绝不编造价格**。每个数字都来自命令输出；解析不到的标的如实说「未解析」。
-- 表格只给关键几行/几只标的，别把几百行 screener 或完整期权链倒出来。
-- 报数字时带上 `time_iso`、单位/`format`、`update_mode`（延迟与否）。
-- 用用户的语言回答。
+- **绝不编造价格**。每个数字都来自命令输出；解析不到就如实说「未解析」。
+- 表格只给关键几行，别把几百根 K 线倒出来。
+- 报数字时带上 `time_iso` 与 `symbol`；用用户的语言回答。
 
 ## 细节（按需加载）
 
-- `references/symbols.md` — 别名全表、交易所、连续期货、解析算法与全部坑。
-- `references/commands.md` — 每个命令的全部 flag、输出字段、示例。
-- `references/api.md` — 到 `@mathieuc/tradingview` 各函数的映射、限制与升级方式。
+- `references/commands.md` — `candles` 全部 flag、输出字段、缓存行为与示例。
+- `references/symbols.md` — 别名全表、交易所、连续期货、解析算法与坑。
+- `references/api.md` — 到 `@mathieuc/tradingview` 的映射、缓存表结构、限制与升级。

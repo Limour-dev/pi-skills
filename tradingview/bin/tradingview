@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # tradingview CLI wrapper — run the CLI from anywhere.
 #
-#   tradingview quote USDT.D US10Y CNH1! BTCUSD
 #   tradingview candles BTCUSD --tf 1D --count 30
-#   tradingview watch BTCUSD --duration 30
+#   tradingview candles USDT.D --tf 4h --from -30d
+#   tradingview candles BINANCE:BTCUSDT --tf 1h --count 24 --cache ~/tv.sqlite
 #
 # Dependencies (the @mathieuc/tradingview library) must be installed once:
 #   (cd "$(dirname "$0")/.." && npm install)
@@ -16,8 +16,9 @@ if [ ! -d "$DIR/node_modules/@mathieuc/tradingview" ]; then
 fi
 
 MAJOR="$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)"
-if [ "$MAJOR" -lt 22 ]; then
-  echo "tradingview: Node >= 22.18 required (found $(node -v 2>/dev/null || echo none)); the CLI runs TypeScript directly." >&2
+MINOR="$(node -p 'Number(process.versions.node.split(".")[1])' 2>/dev/null || echo 0)"
+if [ "$MAJOR" -lt 22 ] || { [ "$MAJOR" -eq 22 ] && [ "$MINOR" -lt 13 ]; }; then
+  echo "tradingview: Node >= 22.13 required (found $(node -v 2>/dev/null || echo none)); the CLI runs TypeScript directly and uses node:sqlite." >&2
   exit 69
 fi
 
