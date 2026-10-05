@@ -117,6 +117,52 @@ export const LOCKED_STATS_COLUMNS = ["gex", "dex"] as const;
 
 export const CHAIN_COLUMNS = ["strike", "bid", "ask", "volume", "oi", "iv", "delta"] as const;
 
+/**
+ * Columns the chain endpoint accepts in addition to `CHAIN_COLUMNS`. `--columns`
+ * is validated against this set so a typo fails as a usage error instead of
+ * silently shifting the positional mapping (see OC-02).
+ */
+export const CHAIN_ALLOWED_COLUMNS = [
+  ...CHAIN_COLUMNS,
+  "gamma",
+  "theta",
+  "vega",
+  "rho",
+  "last",
+] as const;
+
+/**
+ * `stats --columns` accepts the free-tier table columns plus the locked
+ * `gex` / `dex`, and the canonical aliases (`iv_pct`, `expected_move_*`) that
+ * map back onto the upstream `iv` / `expected_move` request keys.
+ */
+export const STATS_ALLOWED_COLUMNS = [
+  ...STATS_COLUMNS,
+  ...LOCKED_STATS_COLUMNS,
+  "iv_pct",
+  "expected_move_abs",
+  "expected_move_pct",
+] as const;
+
+/**
+ * The upstream table always renders its identity column first (`strike` for the
+ * chain, `expiration` for the statistics table). `--columns` is a *local*
+ * projection, so the request always carries that identity column first and the
+ * caller's list is projected afterwards — otherwise a column subset shifts every
+ * value by one (OC-02 / OC-03).
+ */
+export function withIdentity(identity: string, columns: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const column of [identity, ...columns]) {
+    if (!seen.has(column)) {
+      seen.add(column);
+      out.push(column);
+    }
+  }
+  return out;
+}
+
 const INVALID_TICKER = /Could not find options data for ticker\s+([A-Z0-9.\-]+)/i;
 
 /** Turn the upstream "Invalid Ticker" page into a clean exit-3 error. */

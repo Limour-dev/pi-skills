@@ -80,6 +80,9 @@ Table parsing notes:
 
 - The expiry id is only in the cell's `<a href="…?expiration_dates=2026-10-09:w">`; the
   visible text (`Oct 05, 2026 (0 days) (w)`) is a fallback.
+- `stats` / `chain` `--columns` is a **local projection**: the CLI always sends the identity column
+  (`expiration` / `strike`) first and maps cells by header text, so a column subset cannot shift values
+  (OC-02/OC-03). Unknown column keys are rejected with a usage error.
 - Paid cells render `<i class="bi bi-lock">` instead of a value — the CLI maps them to
   `null` and reports `locked_columns` instead of guessing.
 - The `Totals` row has no href and is dropped.

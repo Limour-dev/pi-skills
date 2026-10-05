@@ -7,8 +7,10 @@
 optioncharts <command> <TICKER> [TICKER...] [flags]
 ```
 
-JSON goes to stdout (`--format pretty` by default, `--compact` for one line, `--format csv`
-for tables). Errors go to stderr as `{"ok":false,"error":{code,message,details}}` unless
+JSON goes to stdout (`--format pretty` by default, `--format compact` — alias `--compact` — for one line,
+`--format csv` for tables). `--provenance minimal` keeps only `fetched_at` / `status` / `warnings` and drops the
+constant `*_note` strings; `--no-provenance` removes the `provenance` object entirely. Errors go to stderr as
+`{"ok":false,"error":{code,message,details}}` unless
 `--json-errors` moves them to stdout; the exit code is always non-zero on failure.
 
 ## Envelope
@@ -42,6 +44,7 @@ Every data command returns the same envelope:
   "price": 77.16, "change": -0.32, "change_pct": -0.41, "currency": "USD",
   "name": "iShares 20+ Year Treasury Bond ETF",
   "as_of": "Oct 05, 9:47 AM EDT",
+  "as_of_iso": "2026-10-05T13:47:00.000Z",
   "market_status": "Market Open",
   "options_delay": "Options 15-min Delayed",
   "price_source": "Polygon.io (real-time, per the page tooltip)"
@@ -51,11 +54,15 @@ Every data command returns the same envelope:
 `price` is real-time (Polygon.io); everything option-related on the site is 15 minutes
 delayed. Pre/post-market prices only appear in the widget while a session is active.
 
+`as_of_iso` is the machine-readable form of `as_of` (the widget carries no year; it is resolved against the
+fetch time). `--format csv` is supported: `ticker,price,change,change_pct,currency,name,as_of,as_of_iso,market_status,options_delay`.
+
 ### `info <TICKER>`
 
 `dividend_yield_pct`, `average_volume`, `high_today`, `low_today`, `open_price`, `volume`,
 `week52_high`, `week52_low`. Upstream renders `47.85M`; the CLI expands it to `47850000`.
 Fields the page hides (no data) come back as `null`.
+Share counts are rounded to integers (upstream occasionally ships `2009999.9999999998`), and `--format csv` is supported.
 
 ### `expiries <TICKER>`
 
@@ -77,13 +84,16 @@ Fields the page hides (no data) come back as `null`.
 One row per expiry inside `--dte` (default **no filter**, so pass `--dte 7`; remember `--dte N` is a
 **ceiling**), capped by `--max-exp` (default 8). `--exp 2026-10-09:w` pins a single expiry (that row
 only, one request). One `option_chain_statistics` request per ticker; `--gex` adds one
-`gamma_exposure` request **per selected expiry**.
+`gamma_exposure` request **per selected expiry**, plus one `stock_price_widget` request for the ±1EM band.
 
 Row fields: `expiration`, `kind`, `dte`, `volume_total`, `volume_pcr`, `oi_total`, `oi_pcr`,
 `iv_pct`, `expected_move_abs`, `expected_move_pct`, `max_pain`, `max_pain_diff_pct`,
 `volume_calls`, `volume_puts`, `oi_calls`, `oi_puts`, `contracts_total`, plus
 `net_exposure` / `call_exposure` / `put_exposure` / `call_wall` / `put_wall` /
-`gamma_zero_level` / `gex_expiry` / `gex_as_of` / `expiry_fallback` with `--gex`.
+`gamma_zero_level` / `gex_expiry` / `gex_as_of` / `expiry_fallback` with `--gex`. With `--gex` every row also
+carries the ±1EM normalisation: `net_exposure_within_1em`, `net_exposure_within_1em_share_pct`,
+`abs_share_within_1em_pct`, `strikes_within_1em`, `strikes_total` (null when spot or the per-expiry EM is
+unavailable).
 `gex_as_of` is that row's GEX snapshot time — a `scan --gex` and a `gex` call can differ unless they
 hit the same 60 s cache, so compare the two `as_of` values before quoting both.
 
@@ -113,8 +123,12 @@ optioncharts stats TLT SPY QQQ --format csv
 optioncharts stats TLT --columns expiration,oi_total,iv,dte,gex,dex   # gex/dex come back locked → null
 ```
 
-`--columns` accepts any upstream column key; `gex` and `dex` are paid, so their cells are
-`null` and the column name lands in `locked_columns` (plus a warning).
+`--columns` is a **local projection**: the request always carries `expiration` first and cells are mapped by
+header text, so a column subset (`--columns oi_total`) returns rows instead of an empty table. Column names are
+canonical on output: `iv` → `iv_pct`, `expected_move` → `expected_move_abs` / `expected_move_pct`, and the CSV
+header matches the `stats.rows[]` keys. Unknown column keys fail with exit 2. `gex` and `dex` are paid, so their
+cells are `null` and the column name lands in `locked_columns` (plus a warning). A listed expiry whose `oi_total`
+is 0 gets an `expiry listed but no open interest yet` warning.
 
 ### `gex` / `dex <TICKER>`
 
@@ -151,6 +165,9 @@ optioncharts stats TLT --columns expiration,oi_total,iv,dte,gex,dex   # gex/dex 
   `sigma_pos = (strike − spot) / expected_move_abs` plus `spot`, `spot_as_of`,
   `expected_move_abs`, `expected_move_expiry` (needs one spot + one statistics request; it degrades
   to a warning — with `sigma_pos: null` — when those cannot be fetched, e.g. under `--from-file`).
+  It also fills the payload-level ±1EM summary (`net_exposure_within_1em`,
+  `net_exposure_within_1em_share_pct`, `abs_share_within_1em_pct`, `strikes_within_1em`, `strikes_total`);
+  without `--normalize sigma` those stay null and `within_em_note` says why.
 - `exposure_as_of` is the exposure snapshot's fetch time (the fragment carries no OPRA snapshot
   stamp): compare it before mixing a `scan --gex` headline with a `gex` per-strike table.
 
@@ -162,6 +179,9 @@ Per-strike rows keyed by `{expiry}:{calls|puts}`:
 { "expiration": "2026-10-09:w", "option_type": "CALL", "strike": 75,
   "contract_symbol": "TLT261009C00075000", "open_interest": 3577 }
 ```
+
+Every row also carries a uniform `metric` + `value` pair (`metric: "open_interest"` / `"volume"` /
+`"implied_volatility"`), so one reader handles all three commands (the command-specific field is kept).
 
 `skew` rows carry `implied_volatility` (upstream decimal, `0.5125`) **and** `iv_pct`
 (`51.25`). `oi` also returns `summary[]`: the per-expiry totals the fragment ships
@@ -215,8 +235,9 @@ The call and put tables of `/async/option_chain`, merged into one row list:
               "volume": 0, "oi": 0, "iv_pct": 84.67, "delta": 0.97 } ] }
 ```
 
-`--columns` picks upstream columns (strike/bid/ask/volume/oi/iv/delta/last/...);
-`iv` is stored as `iv_pct` (percent). `--view straddle` renders the straddle layout.
+`--columns` is a **local projection**: `strike` is always sent first and cells are mapped by header text, so a
+subset such as `--columns volume,oi` cannot shift values onto the wrong column. Unknown keys exit 2. The
+output column name is canonical (`iv` → `iv_pct`). `--view straddle` renders the straddle layout.
 A TLT single expiry is ~48 rows/side. Note: the chain endpoint **ignores a missing
 expiry** and uses its own default, so the CLI cross-checks the contract symbols in the
 fragment against the requested expiry and fails (exit 5) on a mismatch.
@@ -262,13 +283,15 @@ A raw `/async/...` path is accepted too.
 | `--view list\|straddle` | `chain` layout |
 | `--top N` | keep the N largest **\|value\|** rows, ranked by `\|net_exposure\|` for `gex`/`dex`/`oi`/`volume`/`skew` and by `\|value\|` for `greeks` (default 40) |
 | `--limit N` | `em` points to print (default 24, `0` = all) |
-| `--columns a,b,c` | `stats` / `chain` columns |
+| `--columns a,b,c` | `stats` / `chain` **local projection**: identity column auto-added, header mapped, canonical names; unknown keys exit 2 |
 | `--greek delta,gamma` | `greeks` filter |
-| `--gex` | `scan`: add walls + exposure per expiry |
-| `--spot` | `scan`: add a real-time spot per ticker |
+| `--gex` | `scan`: add walls + exposure + ±1EM share per expiry (also fetches spot for the band) |
+| `--spot` | `scan`: add a real-time spot per ticker (implied by `--gex`) |
 | `--concurrency N` | `scan` fan-out (default 2) |
-| `--format pretty\|compact\|csv` | default `pretty` |
-| `--units` | `--format csv` only: annotate headers with units, e.g. `net_exposure[usd_per_1pct_move]` |
+| `--format pretty\|compact\|csv` | default `pretty`; `--compact` is an alias for `--format compact` |
+| `--units` | `--format csv` only: append `unit_<column>` columns; the original header names stay stable |
+| `--provenance minimal\|full` | `minimal` keeps `fetched_at` / `status` / `warnings` and drops the long `*_note` strings |
+| `--no-provenance` | remove the `provenance` object entirely |
 | `--from-file PATH` | parse a saved fragment offline (single request only) |
 | `--no-cache` | bypass the 60 s local fragment cache |
 | `--timeout MS` | per-request timeout (default 30000) |

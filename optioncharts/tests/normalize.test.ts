@@ -15,6 +15,8 @@ import {
   maxPainRows,
   priceFromWidget,
   seriesRows,
+  isoFromAsOf,
+  withinExpectedMove,
   statsRows,
   tickerInfo,
 } from "../src/normalize.ts";
@@ -147,4 +149,56 @@ test("statsRows keeps the free-tier columns intact for a live-shaped table", () 
   assert.equal(rows[1].iv_pct, 13.45);
   assert.equal(rows[2].oi_total, 224932);
   assert.equal(rows[2].expected_move_pct, 1.51);
+});
+
+test("chainRows maps a column subset by header, not position (OC-02)", () => {
+  const subset = chainRows(fixture("tlt-chain.html"), ["strike", "volume", "oi"]);
+  const control = chainRows(fixture("tlt-chain.html"), ["strike", "volume", "oi"]);
+  assert.deepEqual(subset[0], control[0]);
+  assert.equal(subset[0].strike, 65);
+  assert.equal(subset[0].volume, 0);
+  assert.equal(subset[0].oi, 0);
+  const ivOnly = chainRows(fixture("tlt-chain.html"), ["strike", "iv"]);
+  assert.equal(ivOnly[0].iv_pct, 51.25);
+});
+
+test("statsRows still identifies rows without the expiration column (OC-03)", () => {
+  // The parser is handed the upstream request list, which always leads with
+  // `expiration`; the caller's projection happens afterwards.
+  const { rows } = statsRows(fixture("tlt-stats.html"), ["expiration", "oi_total"]);
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0].oi_total, 84930);
+  assert.equal(rows[0].expiration, "2026-10-05:w");
+});
+
+test("withinExpectedMove computes the ±1EM share (OC-07)", () => {
+  const payload = extractJson(fixture("tlt-gamma-exposure.html"), "chart_exposure_data");
+  const exposure = exposurePayload(payload);
+  assert.ok(exposure);
+  const strikes = exposure.exposure_by_strike_series;
+  const spot = 77.1;
+  const em = 0.9;
+  const total = strikes.reduce((sum, row) => sum + Math.abs(row.net_exposure), 0);
+  const band = strikes.filter((row) => row.strike >= spot - em && row.strike <= spot + em);
+  const expectedNet = band.reduce((sum, row) => sum + row.net_exposure, 0);
+  const within = withinExpectedMove(strikes, spot, em);
+  assert.ok(Math.abs((within.net_exposure_within_1em as number) - expectedNet) < 1e-3);
+  assert.equal(within.strikes_within_1em, band.length);
+  assert.equal(within.strikes_total, strikes.length);
+  assert.ok(Math.abs((within.net_exposure_within_1em_share_pct as number) - (expectedNet / total) * 100) < 1e-3);
+  // Missing spot/EM must degrade to null, never a guess.
+  assert.equal(withinExpectedMove(strikes, null, em).net_exposure_within_1em, null);
+  assert.equal(withinExpectedMove(strikes, spot, null).strikes_within_1em, null);
+});
+
+test("isoFromAsOf turns the widget stamp into an ISO instant (OC-09)", () => {
+  assert.equal(isoFromAsOf("Oct 05, 9:42 AM EDT", "2026-10-05T14:00:00.000Z"), "2026-10-05T13:42:00.000Z");
+  assert.equal(isoFromAsOf("garbage", "2026-10-05T14:00:00.000Z"), null);
+});
+
+test("tickerInfo rounds share-count float noise (OC-09)", () => {
+  const info = tickerInfo(
+    '<div class="tw-text-sm tw-text-gray-500 tw-mb-1">Volume</div><div class="tw-font-bold tw-text-base">2009999.9999999998</div>',
+  );
+  assert.equal(info.volume, 2010000);
 });

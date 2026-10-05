@@ -17,8 +17,11 @@ import { CliError, DataUnavailableError, ExpFallbackError, UsageError, EXIT } fr
 import {
   CHARTS,
   CHAIN_COLUMNS,
+  CHAIN_ALLOWED_COLUMNS,
   ExpiryService,
   STATS_COLUMNS,
+  STATS_ALLOWED_COLUMNS,
+  withIdentity,
   checkExpiryFallback,
   expiryIdsFromSymbols,
   payloadExpiries,
@@ -40,12 +43,14 @@ import {
   greekRows,
   maxPainRows,
   priceFromWidget,
+  isoFromAsOf,
   seriesRows,
   round,
   statsRows,
   tickerInfo,
   type GreekRow,
   type SeriesRow,
+  withinExpectedMove,
 } from "./normalize.ts";
 import type { ExpiryEntry, FetchResult } from "./types.ts";
 
@@ -217,27 +222,73 @@ function perExpiryNote(count: number): string | null {
 
 /* ------------------------------------------------------------------ commands */
 
-async function cmdSpot(ctx: Context, ticker: string): Promise<Record<string, unknown>> {
+async function cmdSpot(ctx: Context, ticker: string): Promise<{ payload: Record<string, unknown>; csv: CsvBlock }> {
   const result = await fetchPriceWidget(ctx.client, ticker);
   const widget = priceFromWidget(result.body, ticker);
+  const asOfIso = isoFromAsOf(widget.as_of, result.fetched_at);
   const warnings = [DELAY_NOTE];
-  return {
+  const payload: Record<string, unknown> = {
     ticker,
     ...widget,
+    as_of_iso: asOfIso,
     price_source: "Polygon.io (real-time, per the page tooltip)",
     note: "extended-hours (pre/post) prices are only present in the widget when a session is active",
     provenance: provenance(result, ctx.client, ticker, warnings),
   };
+  return {
+    payload,
+    csv: {
+      headers: ["ticker", "price", "change", "change_pct", "currency", "name", "as_of", "as_of_iso", "market_status", "options_delay"],
+      rows: [[
+        ticker,
+        widget.price,
+        widget.change,
+        widget.change_pct,
+        widget.currency ?? null,
+        widget.name ?? null,
+        widget.as_of ?? null,
+        asOfIso,
+        widget.market_status ?? null,
+        widget.options_delay ?? null,
+      ]],
+    },
+  };
 }
 
-async function cmdInfo(ctx: Context, ticker: string): Promise<Record<string, unknown>> {
+async function cmdInfo(ctx: Context, ticker: string): Promise<{ payload: Record<string, unknown>; csv: CsvBlock }> {
   const result = await fetchTickerInfo(ctx.client, ticker);
   const info = tickerInfo(result.body);
   return {
-    ticker,
-    ...info,
-    volume_units: "shares (upstream renders 3.63M etc., expanded here)",
-    provenance: provenance(result, ctx.client, ticker, []),
+    payload: {
+      ticker,
+      ...info,
+      volume_units: "shares (upstream renders 3.63M etc., expanded here)",
+      provenance: provenance(result, ctx.client, ticker, []),
+    },
+    csv: {
+      headers: [
+        "ticker",
+        "dividend_yield_pct",
+        "average_volume",
+        "high_today",
+        "low_today",
+        "open_price",
+        "volume",
+        "week52_high",
+        "week52_low",
+      ],
+      rows: [[
+        ticker,
+        info.dividend_yield_pct,
+        info.average_volume,
+        info.high_today,
+        info.low_today,
+        info.open_price,
+        info.volume,
+        info.week52_high,
+        info.week52_low,
+      ]],
+    },
   };
 }
 
@@ -416,6 +467,13 @@ async function cmdExposure(
     return out;
   });
   const byStrike = topRows(enriched, "net_exposure", ctx.options.top);
+  // ±1EM normalisation (OC-07): free once `--normalize sigma` has fetched spot + EM;
+  // null fields (plus a note) when it has not.
+  const within = withinExpectedMove(
+    exposure.exposure_by_strike_series,
+    sigma?.spot ?? null,
+    sigma?.expected_move_abs ?? null,
+  );
   const byExpiry = exposure.exposure_by_expiration_series.map((row) => ({
     expiration: row.expiration_date_id,
     net_exposure: row.net_exposure,
@@ -452,6 +510,13 @@ async function cmdExposure(
       spot_as_of: sigma?.spot_as_of ?? null,
       expected_move_abs: sigma?.expected_move_abs ?? null,
       expected_move_expiry: sigma?.expected_move_expiry ?? null,
+      ...within,
+      within_em_note: sigma
+        ? "within-1EM fields use spot ± expected_move_abs over this expiry's per-strike chain"
+        : "within-1EM fields need --normalize sigma: they require spot and the per-expiry expected move",
+      within_em_share_note:
+        "net_exposure_within_1em_share_pct = Σnet within ±1EM / Σ|net| over the whole chain × 100; " +
+        "abs_share_within_1em_pct weights by the absolute exposure inside the band",
       exposure_as_of: response.result.fetched_at,
       exposure_as_of_note: EXPOSURE_FRESHNESS_NOTE,
       wall_note:
@@ -521,6 +586,13 @@ async function cmdSeries(
     ctx.options.top,
   ) as unknown as SeriesRow[];
   const payloadExpiryList = [...new Set(rows.map((row) => row.expiration))].sort();
+  // One `metric` + `value` pair per row, so a generic reader does not need a
+  // per-command key (OC-06.3); the original metric field is kept for compatibility.
+  const valuedRows = rows.map((row) => ({
+    ...row,
+    metric: config.metric,
+    value: (row[config.metric] as number | null) ?? null,
+  }));
   const payload: Record<string, unknown> = {
     ticker,
     metric: config.metric,
@@ -528,7 +600,7 @@ async function cmdSeries(
     requested_expiries: ctx.options.exps,
     row_count: rows.length,
     returned_expiries: payloadExpiries(response.data),
-    rows,
+    rows: valuedRows,
     provenance: provenance(response.result, ctx.client, ticker, warnings),
   };
   if (kind === "open_interest" && Array.isArray(response.summary)) {
@@ -709,16 +781,64 @@ async function cmdExpectedMove(
   };
 }
 
+/**
+ * `--columns` is a *local* projection (OC-02/OC-03): the request always carries
+ * the identity column first, unknown names fail as usage errors, and the output
+ * uses one canonical name per metric (`iv` → `iv_pct`, `expected_move` →
+ * `expected_move_abs`).
+ */
+interface StatsColumn {
+  /** Name the CLI emits. */
+  out: string;
+  /** Key the upstream statistics table accepts. */
+  upstream: string;
+}
+
+function resolveStatsColumn(name: string): StatsColumn {
+  switch (name) {
+    case "iv":
+    case "iv_pct":
+      return { out: "iv_pct", upstream: "iv" };
+    case "expected_move":
+    case "expected_move_abs":
+      return { out: "expected_move_abs", upstream: "expected_move" };
+    case "expected_move_pct":
+      return { out: "expected_move_pct", upstream: "expected_move" };
+    default:
+      return { out: name, upstream: name };
+  }
+}
+
+function statsColumnsOf(requested: string[] | undefined): { columns: StatsColumn[]; upstream: string[] } {
+  const names = requested?.length ? requested : [...STATS_COLUMNS];
+  const allowed = STATS_ALLOWED_COLUMNS as readonly string[];
+  const columns = names.map(resolveStatsColumn);
+  for (const column of columns) {
+    if (!allowed.includes(column.out) || !allowed.includes(column.upstream)) {
+      throw new UsageError(`unknown --columns value ${column.out} for stats; allowed: ${allowed.join(", ")}`);
+    }
+  }
+  const upstream = withIdentity("expiration", columns.map((column) => column.upstream));
+  return { columns, upstream };
+}
+
 async function cmdStats(
   ctx: Context,
   ticker: string,
 ): Promise<{ payload: Record<string, unknown>; csv: CsvBlock }> {
-  const columns = ctx.options.columns?.length ? ctx.options.columns : [...STATS_COLUMNS];
-  const result = await fetchStatistics(ctx.client, ticker, columns);
-  const { rows, locked } = statsRows(result.body, columns);
+  const { columns, upstream } = statsColumnsOf(ctx.options.columns);
+  const outColumns = columns.map((column) => column.out);
+  const result = await fetchStatistics(ctx.client, ticker, upstream);
+  const { rows, locked } = statsRows(result.body, upstream);
   const warnings: string[] = [];
   if (locked.length) {
     warnings.push(`${locked.join(", ")} are locked on the free tier (cells render a lock icon → null)`);
+  }
+  const noOpenInterest = upstream.includes("oi_total")
+    ? rows.filter((row) => Number(row.oi_total ?? 0) === 0).map((row) => String(row.expiration))
+    : [];
+  if (noOpenInterest.length) {
+    warnings.push(`expiry listed but no open interest yet: ${noOpenInterest.join(", ")}`);
   }
   const filtered = rows.filter((row) => {
     if (ctx.options.dte !== undefined && row.dte !== null && row.dte > ctx.options.dte) return false;
@@ -727,29 +847,28 @@ async function cmdStats(
     return true;
   });
   const capped = ctx.options.maxExp && ctx.options.maxExp > 0 ? filtered.slice(0, ctx.options.maxExp) : filtered;
-  const headers = ["ticker", ...columns];
   return {
     payload: {
       ticker,
       count: capped.length,
       total_expiries: rows.length,
-      columns,
+      columns: outColumns,
+      requested_columns: ctx.options.columns ?? [],
       locked_columns: locked,
       rows: capped,
       provenance: provenance(result, ctx.client, ticker, warnings),
     },
     csv: {
-      headers,
+      headers: ["ticker", ...outColumns],
       rows: capped.map((row) => [
         ticker,
-        ...columns.map((column) => statsCsvValue(row, column)),
+        ...columns.map((column) => statsCsvValue(row, column.out)),
       ]),
     },
   };
-
 }
 
-/** CSV column key → the normalised `StatsRow` field it lives in. */
+/** Canonical CSV column → the normalised `StatsRow` field it lives in. */
 function statsCsvValue(row: Record<string, unknown>, column: string): string | number | null {
   switch (column) {
     case "expiration":
@@ -757,8 +876,10 @@ function statsCsvValue(row: Record<string, unknown>, column: string): string | n
     case "kind":
       return String(row.kind ?? "");
     case "iv":
+    case "iv_pct":
       return (row.iv_pct as number | null) ?? null;
     case "expected_move":
+    case "expected_move_abs":
       return (row.expected_move_abs as number | null) ?? null;
     case "expected_move_pct":
       return (row.expected_move_pct as number | null) ?? null;
@@ -770,12 +891,27 @@ function statsCsvValue(row: Record<string, unknown>, column: string): string | n
     }
   }
 }
+/**
+ * `chain --columns` validation + identity handling: request `strike` first, map
+ * by header text, then project to the caller's columns (OC-02).
+ */
+function chainColumnsOf(requested: string[] | undefined): { columns: string[]; upstream: string[]; out: string[] } {
+  const columns = requested?.length ? requested : [...CHAIN_COLUMNS];
+  const allowed = CHAIN_ALLOWED_COLUMNS as readonly string[];
+  for (const column of columns) {
+    if (!allowed.includes(column)) {
+      throw new UsageError(`unknown --columns value ${column} for chain; allowed: ${allowed.join(", ")}`);
+    }
+  }
+  const out = columns.map((column) => CHAIN_FIELDS[column] ?? column);
+  return { columns, upstream: withIdentity("strike", columns), out };
+}
 
 async function cmdChain(
   ctx: Context,
   ticker: string,
 ): Promise<{ payload: Record<string, unknown>; csv: CsvBlock }> {
-  const columns = ctx.options.columns?.length ? ctx.options.columns : [...CHAIN_COLUMNS];
+  const { columns, upstream, out } = chainColumnsOf(ctx.options.columns);
   const { ids, warnings } = await selectChartExpiries(ctx, ticker);
   const result = await fetchChain(ctx.client, {
     ticker,
@@ -783,9 +919,9 @@ async function cmdChain(
     optionType: ctx.options.optionType,
     view: ctx.options.view,
     strikeRange: ctx.options.strikeRange,
-    columns,
+    columns: upstream,
   });
-  const rows = chainRows(result.body, columns);
+  const rows = chainRows(result.body, upstream);
   const fragmentExpiries = [...new Set([...extractExpiryIds(result.body), ...expiryIdsFromSymbols(result.body)])];
   const missing = ids.filter((exp) => !fragmentExpiries.includes(exp));
   if (missing.length) {
@@ -799,13 +935,14 @@ async function cmdChain(
       ticker,
       view: ctx.options.view,
       expiries: ids,
-      columns,
+      columns: out,
+      requested_columns: ctx.options.columns ?? [],
       row_count: rows.length,
       rows,
       provenance: provenance(result, ctx.client, ticker, warnings),
     },
     csv: {
-      headers: ["ticker", "expiration", "option_type", ...columns],
+      headers: ["ticker", "expiration", "option_type", ...out],
       rows: rows.map((row) => [
         ticker,
         ids.join("+"),
@@ -847,6 +984,17 @@ async function cmdScan(ctx: Context, ticker: string): Promise<{ payload: Record<
   }
 
   const scanRows: ScanRow[] = selected.map((row) => ({ ...row }));
+  // Spot anchors the ±1EM band on every --gex row (OC-07) and fills the `spot`
+  // column; `--spot` alone still fetches it without --gex.
+  let spot: number | null = null;
+  if (options.withSpot || options.withGex) {
+    try {
+      const price = await fetchPriceWidget(ctx.client, ticker);
+      spot = priceFromWidget(price.body, ticker).price;
+    } catch (error) {
+      warnings.push(`spot lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   if (options.withGex) {
     for (const row of scanRows) {
       try {
@@ -876,6 +1024,10 @@ async function cmdScan(ctx: Context, ticker: string): Promise<{ payload: Record<
         row.call_wall = exposure.call_wall;
         row.put_wall = exposure.put_wall;
         row.gamma_zero_level = exposure.exposure_by_expiration_series[0]?.gamma_zero_level ?? null;
+        Object.assign(
+          row,
+          withinExpectedMove(exposure.exposure_by_strike_series, spot, row.expected_move_abs as number | null),
+        );
       } catch (error) {
         warnings.push(
           `gex for ${String(row.expiration)} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -890,15 +1042,7 @@ async function cmdScan(ctx: Context, ticker: string): Promise<{ payload: Record<
     );
   }
 
-  let spot: number | null = null;
-  if (options.withSpot) {
-    try {
-      const price = await fetchPriceWidget(ctx.client, ticker);
-      spot = priceFromWidget(price.body, ticker).price;
-    } catch (error) {
-      warnings.push(`spot lookup failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
+  // (spot is fetched above, before the per-expiry --gex loop)
 
   const signFlips: Array<Record<string, unknown>> = [];
   for (let index = 1; index < scanRows.length; index += 1) {
@@ -931,6 +1075,12 @@ async function cmdScan(ctx: Context, ticker: string): Promise<{ payload: Record<
       exposure_as_of_note: options.withGex ? EXPOSURE_FRESHNESS_NOTE : null,
       rows: scanRows,
       sign_flips: signFlips,
+      sign_flips_note:
+        "adjacent expiries whose net_exposure changes sign (positive gamma pinning ↔ negative gamma acceleration); " +
+        "only meaningful with --gex",
+      within_em_note:
+        "net_exposure_within_1em_share_pct = Σnet within spot ±expected_move_abs / Σ|net| of that expiry's chain × 100 " +
+        "(OC-07); null if spot or the expected move is unavailable",
       provenance: provenance(result, ctx.client, ticker, warnings),
     },
     csv: {
@@ -951,6 +1101,11 @@ async function cmdScan(ctx: Context, ticker: string): Promise<{ payload: Record<
         "net_exposure",
         "call_wall",
         "put_wall",
+        "net_exposure_within_1em",
+        "net_exposure_within_1em_share_pct",
+        "abs_share_within_1em_pct",
+        "strikes_within_1em",
+        "strikes_total",
         "gex_expiry",
         "gex_as_of",
         "expiry_fallback",
@@ -972,6 +1127,11 @@ async function cmdScan(ctx: Context, ticker: string): Promise<{ payload: Record<
         (row.net_exposure as number | null) ?? null,
         (row.call_wall as number | null) ?? null,
         (row.put_wall as number | null) ?? null,
+        (row.net_exposure_within_1em as number | null) ?? null,
+        (row.net_exposure_within_1em_share_pct as number | null) ?? null,
+        (row.abs_share_within_1em_pct as number | null) ?? null,
+        (row.strikes_within_1em as number | null) ?? null,
+        (row.strikes_total as number | null) ?? null,
         (row.gex_expiry as string | null) ?? null,
         (row.gex_as_of as string | null) ?? null,
         row.expiry_fallback === true ? "true" : "",
@@ -1155,10 +1315,10 @@ export async function runCommand(
       let result: { payload: Record<string, unknown>; csv?: CsvBlock };
       switch (name) {
         case "spot":
-          result = { payload: await cmdSpot(ctx, ticker) };
+          result = await cmdSpot(ctx, ticker);
           break;
         case "info":
-          result = { payload: await cmdInfo(ctx, ticker) };
+          result = await cmdInfo(ctx, ticker);
           break;
         case "expiries":
           result = await cmdExpiries(ctx, ticker);

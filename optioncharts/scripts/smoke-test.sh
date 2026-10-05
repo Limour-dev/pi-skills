@@ -141,7 +141,18 @@ OUT=$(run gex TLT --exp 2026-10-09:w --format compact --from-file "$FIX/tlt-gamm
 check "gex always exposes share_of_abs_total_pct" '"share_of_abs_total_pct"' "$OUT"
 check "gex exposes the exposure snapshot time" '"exposure_as_of"' "$OUT"
 OUT=$(run gex TLT --exp 2026-10-09:w --format csv --units --from-file "$FIX/tlt-gamma-exposure.html")
-check "--units annotates the net_exposure column" 'net_exposure\[usd_per_1pct_move\]' "$OUT"
+check "--units keeps net_exposure addressable" ',net_exposure,' "$OUT"
+check "--units appends unit_net_exposure" 'unit_net_exposure' "$OUT"
+OUT=$(run oi TLT --exp 2026-10-09:w --compact --from-file "$FIX/tlt-open-interest.html")
+check "--compact aliases --format compact" '"command":"oi"' "$OUT"
+OUT=$(run chain TLT --exp 2026-10-09:w --columns volume,oi --format csv --from-file "$FIX/tlt-chain.html")
+check "chain --columns subset stays aligned" 'TLT,2026-10-09:w,CALL,0,0' "$OUT"
+OUT=$(run stats TLT --columns oi_total --format csv --from-file "$FIX/tlt-stats.html")
+check "stats --columns without expiration returns rows" 'TLT,84930' "$OUT"
+OUT=$(run spot TLT --format compact --from-file "$FIX/tlt-price.html")
+check "spot carries as_of_iso" '"as_of_iso":' "$OUT"
+OUT=$(run spot TLT --provenance minimal --format compact --from-file "$FIX/tlt-price.html")
+check "--provenance=minimal keeps warnings" '"warnings"' "$OUT"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

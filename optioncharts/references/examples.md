@@ -1,20 +1,21 @@
 # Real outputs
 
-Every snippet below is verbatim CLI output (2026-10-05, market open, all times UTC);
+Representative CLI output (2026-10-05, market open, all times UTC);
 long arrays and `provenance` blocks are trimmed where marked. `optioncharts` is short for
 `bin/optioncharts`.
 
 ## Weekly scan — `scan TLT --dte 7 --gex --format csv`
 
 One row per expiry inside the DTE window: volume, put/call ratios, open interest, IV,
-expected move, max pain, plus GEX walls and exposure when `--gex` is passed.
+expected move, max pain, plus GEX walls and exposure when `--gex` is passed. `--gex` also appends the ±1EM
+normalisation columns (`net_exposure_within_1em*`, `strikes_within_1em`, `strikes_total`).
 
 ```csv
-ticker,expiration,kind,dte,volume_total,volume_pcr,oi_total,oi_pcr,iv_pct,expected_move_abs,expected_move_pct,max_pain,max_pain_diff_pct,net_exposure,call_wall,put_wall,gex_expiry,expiry_fallback
-TLT,2026-10-05:w,weekly,0,6531,1.1,109683,0.51,22.62,0.24,0.32,77.5,0.58,32480195.16,77.5,77,2026-10-05:w,
-TLT,2026-10-07:w,weekly,2,6390,0.52,80431,0.79,16.7,0.63,0.82,78,1.23,-3888627.18,78,76.5,2026-10-07:w,
-TLT,2026-10-09:w,weekly,4,8243,0.43,286990,0.33,16.64,0.91,1.18,78,1.23,48706514.02,78,78,2026-10-09:w,
-TLT,2026-10-12:w,weekly,7,14579,0.04,65735,0.36,14.35,1.05,1.36,77.5,0.58,2771694.13,77,77,2026-10-12:w,
+ticker,expiration,kind,dte,volume_total,volume_pcr,oi_total,oi_pcr,iv_pct,expected_move_abs,expected_move_pct,max_pain,max_pain_diff_pct,net_exposure,call_wall,put_wall,net_exposure_within_1em,net_exposure_within_1em_share_pct,abs_share_within_1em_pct,strikes_within_1em,strikes_total,gex_expiry,gex_as_of,expiry_fallback
+TLT,2026-10-05:w,weekly,0,6531,1.1,109683,0.51,22.62,0.24,0.32,77.5,0.58,32480195.16,77.5,77,1526570,4.7,3.1,8,36,2026-10-05:w,2026-10-05T14:02:11.000Z,
+TLT,2026-10-07:w,weekly,2,6390,0.52,80431,0.79,16.7,0.63,0.82,78,1.23,-3888627.18,78,76.5,-178877,4.6,2.4,7,34,2026-10-07:w,2026-10-05T14:02:13.000Z,
+TLT,2026-10-09:w,weekly,4,8243,0.43,286990,0.33,16.64,0.91,1.18,78,1.23,48706514.02,78,78,2289206,4.7,3.9,9,38,2026-10-09:w,2026-10-05T14:02:15.000Z,
+TLT,2026-10-12:w,weekly,7,14579,0.04,65735,0.36,14.35,1.05,1.36,77.5,0.58,2771694.13,77,77,130270,4.7,2.1,6,30,2026-10-12:w,2026-10-05T14:02:17.000Z,
 ```
 
 Reading it: `iv_pct` rises into the 0-DTE expiry (22.6%), `expected_move_pct` grows with
@@ -22,8 +23,8 @@ DTE, `net_exposure` flips sign between 10-07 and 10-09 (negative gamma → posit
 and max pain sits ~1.2% above spot for the two closest weeklies.
 `expiry_fallback` is empty because every row's GEX really belongs to its own expiry.
 
-Without `--gex` the same command costs one request per ticker instead of one plus one per
-expiry; the CLI then warns `pass --gex to add walls and exposure`.
+Without `--gex` the same command costs one request per ticker; `--gex` adds one `gamma_exposure` request per
+expiry plus one spot request for the ±1EM band. The CLI warns `pass --gex to add walls and exposure` when omitted.
 
 ## Per-strike gamma exposure — `gex TLT --exp 2026-10-09:w --top 3`
 
@@ -64,14 +65,15 @@ Everything is `$/1%`, so the wall level matters, not the magnitude relative to a
 ## Cross-ticker normalisation — `gex TLT --exp 2026-10-09:w --top 3 --normalize pct --units --format csv`
 
 ```csv
-ticker,expiry,strike,call_exposure[usd_per_1pct_move],put_exposure[usd_per_1pct_move],net_exposure[usd_per_1pct_move],share_of_abs_total_pct[pct],sigma_pos[sigma]
-TLT,2026-10-09:w,79,14294865.99,-2672476.47,11622389.52,22.6196,
-TLT,2026-10-09:w,80,7495463.15,-1631161.41,5864301.74,11.4132,
-TLT,2026-10-09:w,75,286913.09,-5607120.38,-5320207.28,-10.3542,
+ticker,expiry,strike,call_exposure,put_exposure,net_exposure,share_of_abs_total_pct,sigma_pos,unit_call_exposure,unit_put_exposure,unit_net_exposure,unit_share_of_abs_total_pct,unit_sigma_pos
+TLT,2026-10-09:w,79,14294865.99,-2672476.47,11622389.52,22.6196,,usd_per_1pct_move,usd_per_1pct_move,usd_per_1pct_move,pct,sigma
+TLT,2026-10-09:w,80,7495463.15,-1631161.41,5864301.74,11.4132,,usd_per_1pct_move,usd_per_1pct_move,usd_per_1pct_move,pct,sigma
+TLT,2026-10-09:w,75,286913.09,-5607120.38,-5320207.28,-10.3542,,usd_per_1pct_move,usd_per_1pct_move,usd_per_1pct_move,pct,sigma
 ```
 
-`--units` spells out the otherwise-memorised column units; `share_of_abs_total_pct` is always
-present (no extra request) and re-weights the chain to 100%, so it can be compared across tickers.
+`--units` appends a `unit_<column>` column for every unit-bearing column while keeping the original header names,
+so the same reader works with or without it. `share_of_abs_total_pct` is always present (no extra request) and
+re-weights the chain to 100%, so it can be compared across tickers.
 `--normalize sigma` additionally fills `sigma_pos = (strike − spot) / expected_move_abs` (here null
 because `--from-file` cannot issue the two extra spot/statistics requests).
 
@@ -80,14 +82,14 @@ because `--from-file` cannot issue the two extra spot/statistics requests).
 One request for the whole table (the CSV below is complete).
 
 ```csv
-ticker,expiration,volume_total,volume_pcr,oi_total,oi_pcr,iv,expected_move,max_pain,volume_calls,volume_puts,oi_calls,oi_puts,dte,contracts_total
+ticker,expiration,volume_total,volume_pcr,oi_total,oi_pcr,iv_pct,expected_move_abs,max_pain,volume_calls,volume_puts,oi_calls,oi_puts,dte,contracts_total
 TLT,2026-10-05:w,6531,1.1,109683,0.51,22.62,0.24,77.5,3111,3420,72428,37255,0,72
 TLT,2026-10-07:w,6390,0.52,80431,0.79,16.7,0.63,78,4209,2181,45016,35415,2,90
 TLT,2026-10-09:w,8243,0.43,286990,0.33,16.64,0.91,78,5779,2464,215608,71382,4,94
 ```
 
-JSON rows rename two columns on purpose: `iv` → `iv_pct`, `expected_move` →
-`expected_move_abs` + `expected_move_pct`. The `.csv` view keeps the upstream column names.
+JSON rows and CSV headers share canonical names: `iv_pct`, `expected_move_abs` / `expected_move_pct` (the
+upstream request keys `iv` / `expected_move` are still accepted in `--columns`).
 
 ## Max pain term structure — `max-pain TLT --dte 20 --format csv`
 
@@ -106,7 +108,7 @@ diffs shift; percentages are the stable read).
 ## Option chain — `chain TLT --exp 2026-10-09:w --format csv`
 
 ```csv
-ticker,expiration,option_type,strike,bid,ask,volume,oi,iv,delta
+ticker,expiration,option_type,strike,bid,ask,volume,oi,iv_pct,delta
 TLT,2026-10-09:w,CALL,65,12.05,12.25,0,0,67.51,0.99
 TLT,2026-10-09:w,CALL,70,7.1,7.25,2,0,46.83,0.97
 ...

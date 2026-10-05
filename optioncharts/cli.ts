@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { Client } from "./src/http.ts";
 import { ExpiryService } from "./src/endpoints.ts";
 import { EXIT, CliError, UsageError, errorPayload } from "./src/errors.ts";
-import { render, type OutputFormat } from "./src/format.ts";
+import { render, shapeDocument, type OutputFormat, type ProvenanceMode } from "./src/format.ts";
 import {
   runCommand,
   type CommandName,
@@ -96,9 +96,9 @@ Data shaping:
   --view list|straddle         chain layout (default list)
   --top N                      keep the N largest |value| rows (greeks default 40)
   --limit N                    expected-move points to print (default 24, 0 = all)
-  --columns a,b,c              stats/chain columns
+  --columns a,b,c              stats/chain columns (identity col auto-added; unknown keys error)
   --greek delta,gamma          greeks to include
-  --gex                        scan: add walls + net exposure per expiry
+  --gex                        scan: add walls + exposure + ±1EM share per expiry
   --concurrency N              scan fan-out (default 2)
 
 Offline / plumbing:
@@ -109,8 +109,10 @@ Offline / plumbing:
   --var NAME               raw: which inline variable(s) to extract
   --param k=v              raw: extra query parameters (repeatable)
   --html                   raw: print the fragment instead of the JSON
-  --format pretty|compact|csv
-  --units                  csv: annotate headers with units (net_exposure[usd_per_1pct_move])
+  --format pretty|compact|csv  (alias: --compact for --format compact)
+  --provenance minimal|full   minimal keeps fetched_at/status/warnings only
+  --no-provenance             drop the provenance object entirely
+  --units                  csv: append unit_<column> columns (header names stay stable)
   --json-errors            errors as JSON on stdout (still non-zero exit)
   -h, --help / --version
 `;
@@ -134,6 +136,8 @@ const BOOL_FLAGS = new Set([
   "json-errors",
   "help",
   "version",
+  "compact",
+  "no-provenance",
 ]);
 
 const VALUE_FLAGS = new Set([
@@ -156,6 +160,7 @@ const VALUE_FLAGS = new Set([
   "var",
   "param",
   "format",
+  "provenance",
 ]);
 
 function parseArgs(argv: string[]): { positionals: string[]; flags: Flags } {
@@ -315,7 +320,17 @@ async function main(): Promise<number> {
     throw new UsageError("raw takes exactly one TICKER");
   }
 
-  const format = oneOf<OutputFormat>(flags, "format", ["pretty", "compact", "csv"], "pretty");
+  let format = oneOf<OutputFormat>(flags, "format", ["pretty", "compact", "csv"], "pretty");
+  // `--compact` is the documented alias for `--format compact` (OC-01).
+  if (flags.bools.has("compact")) {
+    if (flags.values.has("format") && format !== "compact") {
+      throw new UsageError(`--compact conflicts with --format ${flags.values.get("format")?.[0]}`);
+    }
+    format = "compact";
+  }
+  const provenanceMode: ProvenanceMode = flags.bools.has("no-provenance")
+    ? "none"
+    : oneOf<"full" | "minimal">(flags, "provenance", ["full", "minimal"], "full");
   if (flags.bools.has("units") && format !== "csv") {
     process.stderr.write("note: --units only affects --format csv\n");
   }
@@ -333,7 +348,9 @@ async function main(): Promise<number> {
   }
 
   const result = await runCommand(command, command === "probe" ? ["SPY"] : tickers, ctx);
-  process.stdout.write(`${render(result.doc, format, result.csv, flags.bools.has("units"))}\n`);
+  process.stdout.write(
+    `${render(shapeDocument(result.doc, provenanceMode), format, result.csv, flags.bools.has("units"))}\n`,
+  );
   return result.exitCode ?? EXIT.ok;
 }
 

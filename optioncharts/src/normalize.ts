@@ -167,6 +167,47 @@ function round(value: number, digits: number): number {
   return Math.round(value * factor) / factor;
 }
 
+export interface WithinEm {
+  net_exposure_within_1em: number | null;
+  net_exposure_within_1em_share_pct: number | null;
+  abs_share_within_1em_pct: number | null;
+  strikes_within_1em: number | null;
+  strikes_total: number;
+}
+
+/**
+ * Share of a GEX/DEX chain inside ±1 expected move — the cross-ticker
+ * normalisation SKILL.md recommends (OC-07). Needs the spot and the per-expiry
+ * expected move in absolute price terms; returns null fields when either is
+ * missing instead of guessing.
+ */
+export function withinExpectedMove(
+  strikes: readonly ExposureStrike[],
+  spot: number | null,
+  expectedMove: number | null,
+): WithinEm {
+  const valid = strikes.filter((row) => typeof row.strike === "number" && Number.isFinite(row.net_exposure));
+  const total = valid.reduce((sum, row) => sum + Math.abs(row.net_exposure ?? 0), 0);
+  if (spot === null || expectedMove === null || expectedMove <= 0 || !valid.length) {
+    return {
+      net_exposure_within_1em: null,
+      net_exposure_within_1em_share_pct: null,
+      abs_share_within_1em_pct: null,
+      strikes_within_1em: null,
+      strikes_total: valid.length,
+    };
+  }
+  const within = valid.filter((row) => row.strike >= spot - expectedMove && row.strike <= spot + expectedMove);
+  const net = within.reduce((sum, row) => sum + (row.net_exposure ?? 0), 0);
+  const absolute = within.reduce((sum, row) => sum + Math.abs(row.net_exposure ?? 0), 0);
+  return {
+    net_exposure_within_1em: round(net, 4),
+    net_exposure_within_1em_share_pct: total > 0 ? round((net / total) * 100, 4) : null,
+    abs_share_within_1em_pct: total > 0 ? round((absolute / total) * 100, 4) : null,
+    strikes_within_1em: within.length,
+    strikes_total: valid.length,
+  };
+}
 /** Column keys the statistics endpoint accepts → the shape the CLI emits. */
 const STATS_NUMERIC: Record<string, string> = {
   volume_total: "volume_total",
@@ -188,23 +229,74 @@ export interface StatsResult {
   locked: string[];
 }
 
+/** Normalise a table header for matching: `Open Interest` → `openinterest`. */
+function normalizeHeader(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Header text (normalised) → cell index for one parsed table. */
+function headerIndex(table: Table): Map<string, number> {
+  const map = new Map<string, number>();
+  table.headers.forEach((header, index) => {
+    const key = normalizeHeader(header);
+    if (key && !map.has(key)) map.set(key, index);
+  });
+  return map;
+}
+
+/**
+ * Resolve a column to a cell index: prefer the parsed header text (so a request
+ * subset cannot shift values, OC-02/OC-03) and fall back to request order when
+ * the header is unknown.
+ */
+function mappedIndex(headers: Map<string, number>, aliases: readonly string[] | undefined, fallback: number): number {
+  if (aliases) {
+    for (const alias of aliases) {
+      const index = headers.get(alias);
+      if (index !== undefined) return index;
+    }
+  }
+  return fallback;
+}
+
+/** Upstream statistics headers → the request key they belong to. */
+const STATS_HEADER_ALIASES: Record<string, readonly string[]> = {
+  expiration: ["expiration"],
+  volume_total: ["volumetotal"],
+  volume_pcr: ["volumeputcallratio", "volumepcr"],
+  oi_total: ["oitotal", "openinteresttotal"],
+  oi_pcr: ["oiputcallratio", "oipcr"],
+  iv: ["iv"],
+  expected_move: ["expectedmove"],
+  max_pain: ["maxpainvscur", "maxpain"],
+  volume_calls: ["volumecalls"],
+  volume_puts: ["volumeputs"],
+  oi_calls: ["oicalls"],
+  oi_puts: ["oiputs"],
+  dte: ["dte"],
+  contracts_total: ["contractstotal", "contracts"],
+  gex: ["gexnetoi", "gex"],
+  dex: ["dexnetoi", "dex"],
+};
+
 /**
  * Parse the `option_chain_statistics` table.
  *
- * Cells are mapped **positionally** against the requested `columns` list (the
- * server renders headers in request order) and cross-checked against the header
- * text; a locked cell (paywall icon) becomes `null` plus a `locked` warning
- * instead of a wrong number.
+ * Cells are mapped by **header text** when it is recognisable and fall back to
+ * the request order otherwise, so a `--columns` subset can never shift values
+ * (OC-02 / OC-03). A locked cell (paywall icon) becomes `null` plus a `locked`
+ * warning instead of a wrong number.
  */
 export function statsRows(html: string, columns: readonly string[]): StatsResult {
   const table = parseTables(html)[0];
   const rows: StatsRow[] = [];
   const locked: string[] = [];
   if (!table) return { rows, locked };
+  const headers = headerIndex(table);
   for (const cells of table.rows) {
     const row: StatsRow = { expiration: "", kind: "weekly", dte: null };
     columns.forEach((column, index) => {
-      const cell = cells[index];
+      const cell = cells[mappedIndex(headers, STATS_HEADER_ALIASES[column], index)];
       if (!cell) return;
       if (cell.locked) {
         row[column] = null;
@@ -221,11 +313,18 @@ export function statsRows(html: string, columns: readonly string[]): StatsResult
           break;
         }
         case "iv":
+        case "iv_pct":
           row.iv_pct = parseNumber(cell.text);
           break;
-        case "expected_move": {
+        case "expected_move":
+        case "expected_move_abs": {
           const parsed = parsePlusMinus(cell.text);
           row.expected_move_abs = parsed.abs;
+          row.expected_move_pct = parsed.pct;
+          break;
+        }
+        case "expected_move_pct": {
+          const parsed = parsePlusMinus(cell.text);
           row.expected_move_pct = parsed.pct;
           break;
         }
@@ -287,13 +386,37 @@ export function expiryFromText(text: string): { exp_id: string; kind: "weekly" |
 /** Chain column key → the normalised `ChainRow` field it is stored in. */
 export const CHAIN_FIELDS: Record<string, string> = { iv: "iv_pct" };
 
-/** Parse the call/put tables of an option-chain fragment into flat rows. */
+/** Upstream option-chain headers → the request key they belong to. */
+const CHAIN_HEADER_ALIASES: Record<string, readonly string[]> = {
+  strike: ["strike"],
+  bid: ["bid"],
+  ask: ["ask"],
+  volume: ["volume"],
+  oi: ["oi", "openinterest"],
+  iv: ["iv", "impliedvolatility"],
+  delta: ["delta"],
+  gamma: ["gamma"],
+  theta: ["theta"],
+  vega: ["vega"],
+  rho: ["rho"],
+  last: ["last"],
+};
+
+/**
+ * Parse the call/put tables of an option-chain fragment into flat rows.
+ *
+ * Each cell is addressed by its header text when recognisable and by request
+ * order otherwise — the upstream table always prepends a `Strike` column, so
+ * positional-only mapping silently shifted every value for a column subset
+ * (OC-02).
+ */
 export function chainRows(html: string, columns: readonly string[]): ChainRow[] {
   const tables = parseTables(html);
   const rows: ChainRow[] = [];
   for (const table of tables) {
     const side = table.id?.includes("put") ? "PUT" : table.id?.includes("call") ? "CALL" : null;
     if (!side) continue;
+    const headers = headerIndex(table);
     for (const cells of table.rows) {
       const row: ChainRow = {
         option_type: side,
@@ -307,7 +430,7 @@ export function chainRows(html: string, columns: readonly string[]): ChainRow[] 
       };
       let touched = false;
       columns.forEach((column, index) => {
-        const cell = cells[index];
+        const cell = cells[mappedIndex(headers, CHAIN_HEADER_ALIASES[column], index)];
         if (!cell || cell.locked) return;
         const value = parseNumber(cell.text);
         if (value !== null) touched = true;
@@ -376,6 +499,31 @@ export function easternTime(ms: number): { date: string; time: string } | null {
   };
 }
 
+/**
+ * The price widget's `As of Oct 05, 11:42 AM EDT` stamp carries no year;
+ * resolve it against the fetch time so callers get a machine-readable instant
+ * (OC-09.1) while `as_of` stays for display.
+ */
+export function isoFromAsOf(text: string | undefined, referenceIso: string): string | null {
+  if (!text) return null;
+  const match = /^([A-Za-z]{3})\w*\s+(\d{1,2}),\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*([A-Z]{2,4})$/.exec(text.trim());
+  if (!match) return null;
+  const month = MONTHS.indexOf(match[1].toLowerCase());
+  const offset = match[6] === "EDT" ? 4 : match[6] === "EST" ? 5 : null;
+  if (month < 0 || offset === null) return null;
+  let hour = Number(match[3]) % 12;
+  if (match[5] === "PM") hour += 12;
+  const reference = Number.isFinite(Date.parse(referenceIso)) ? Date.parse(referenceIso) : Date.now();
+  const et = easternTime(reference);
+  const year = et ? Number(et.date.slice(0, 4)) : new Date(reference).getUTCFullYear();
+  const candidate = Date.UTC(year, month, Number(match[2]), hour + offset, Number(match[4]));
+  if (!Number.isFinite(candidate)) return null;
+  const halfYear = 183 * 24 * 3600 * 1000;
+  const yearMs = 365 * 24 * 3600 * 1000;
+  const drift = candidate - reference;
+  const adjusted = drift > halfYear ? candidate - yearMs : drift < -halfYear ? candidate + yearMs : candidate;
+  return new Date(adjusted).toISOString();
+}
 /** Expected-move cone: one point per timestamp (838 points on a live ticker). */
 export function expectedMovePoints(payload: unknown): ExpectedMovePoint[] {
   if (!Array.isArray(payload)) return [];
@@ -481,6 +629,10 @@ export function tickerInfo(html: string): TickerInfo {
     if (!key) continue;
     info[key] = parseScaleNumber(match[2]);
   }
+  // Upstream occasionally ships float noise (`2009999.9999999998`); a share
+  // count is an integer (OC-09.2).
+  if (info.volume !== null) info.volume = Math.round(info.volume);
+  if (info.average_volume !== null) info.average_volume = Math.round(info.average_volume);
   return info;
 }
 

@@ -21,7 +21,8 @@ description: >-
 optioncharts <command> <TICKER> [TICKER...] [flags]
 ```
 
-stdout 输出 JSON（默认 pretty；`--compact` 单行；`--format csv` 表格）。
+stdout 输出 JSON（默认 pretty；`--compact` 是 `--format compact` 的别名、单行；`--format csv` 表格）。
+`--provenance minimal` 只留 `fetched_at`/`status`/`warnings` 并丢掉长说明串，`--no-provenance` 整个删掉，`--format csv --units` 追加 `unit_<列>` 列而不改列名。
 退出码：`0` 成功 · `1` 运行错误 · `2` 用法错误 · `3` 无该标的/无数据 ·
 `4` 限流(429) · `5` **服务端静默换了到期日**（默认即报错）。
 
@@ -29,17 +30,17 @@ stdout 输出 JSON（默认 pretty；`--compact` 单行；`--format csv` 表格�
 
 | 命令 | 返回 |
 | --- | --- |
-| `spot TICKER` | 实时现价、涨跌幅、`As of` 时间、市场状态、期权延迟说明 |
+| `spot TICKER` | 实时现价、涨跌幅、`As of` 时间（另给机器可读 `as_of_iso`）、市场状态、期权延迟说明；支持 `--format csv` |
 | `info TICKER` | 股息率、均量、今日高低/开盘、成交量、52 周高低 |
 | `expiries TICKER` | 全部到期日：`2026-10-09:w` / `:m`、星期、DTE、label |
-| `scan TICKER...` | **周度扫描**：每个到期日一行（量/PCR/OI/PCR/IV/预期波动/max pain/DTE），`--gex` 再加墙位与敞口 |
+| `scan TICKER...` | **周度扫描**：每个到期日一行（量/PCR/OI/PCR/IV/预期波动/max pain/DTE），`--gex` 再加墙位、敞口与 ±1EM 归一化字段（`sign_flips[]` 标出相邻到期日 gamma 变号） |
 | `stats TICKER...` | 全部到期日的链统计表（一次请求拿全） |
-| `gex TICKER` / `dex TICKER` | 逐行权价 gamma/delta 敞口 + `call_wall` / `put_wall` + 净敞口 |
-| `oi` / `volume` / `skew TICKER` | 逐行权价 open interest / 成交量 / 隐含波动率 |
+| `gex TICKER` / `dex TICKER` | 逐行权价 gamma/delta 敞口 + `call_wall` / `put_wall` + 净敞口（`--normalize sigma` 时附 `sigma_pos` 与 ±1EM 份额） |
+| `oi` / `volume` / `skew TICKER` | 逐行权价 open interest / 成交量 / 隐含波动率（每行带统一 `metric`+`value`） |
 | `greeks TICKER` | 逐行权价 delta/gamma/theta/vega/rho + IV（`--greek` 过滤） |
 | `max-pain TICKER` | 一次请求返回**所有**到期日的 max pain |
 | `em TICKER` | expected-move 锥形（近端 N 个点，`--limit`）；每点带 `et_date`（美东交易日） |
-| `chain TICKER` | 期权链表格（call/put，bid/ask/volume/OI/IV/delta） |
+| `chain TICKER` | 期权链表格（call/put，bid/ask/volume/OI/IV/delta；`--columns` 为本地投影，identity 列自动补） |
 | `probe` | 各片段可达性与延迟（排查网络/改版） |
 | `raw TICKER --endpoint NAME` | 打印片段内联 JSON（`--html` 打印原始片段） |
 
@@ -107,7 +108,7 @@ optioncharts oi  TLT --exp 2026-10-09:w --format csv
 - `gex` / `dex` 每行**总是**带 `share_of_abs_total_pct = net_exposure / Σ|net_exposure| × 100`（免费、无需额外请求）——用它在**桶内**定位墙位。
 - `--normalize sigma` 再给出 `sigma_pos = (strike − spot) / expected_move_abs`（`spot` 取实时、`expected_move_abs` 取该到期日 per-expiry EM；
   额外 +2 次请求，取不到时降级为 warning、`sigma_pos` 为 `null`）。
-- 组合多标的的正确做法：按 `sigma_pos` 对齐行权价，或比较「±1EM 内净 GEX 占全链比例」，**不要**直接比较 `net_exposure` 数字。
+- 组合多标的的正确做法：按 `sigma_pos` 对齐行权价，或比较「±1EM 内净 GEX 占全链比例」——`scan --gex` 每行已直接给出 `net_exposure_within_1em` / `net_exposure_within_1em_share_pct` / `abs_share_within_1em_pct` / `strikes_within_1em` / `strikes_total`（需 spot + per-expiry EM，故 `scan --gex` 会多取一次 spot）；`gex` 在 `--normalize sigma` 时同样给出。**不要**直接比较 `net_exposure` 数字。
 
 ## 多到期日 × 逐行权价
 
@@ -124,15 +125,15 @@ optioncharts oi  TLT --exp 2026-10-09:w --format csv
   `from_cache` / `requests_this_run` / `warnings` —— **报表时先看 warnings**。
 - `--format csv` 会带 `ticker` 列，适合多标的横向比较；但 CSV 会丢掉 warnings。
   担心列名被误记（例如第 14 列 `net_exposure` 是 `usd_per_1pct_move` 而非美元名义额），加 `--units`
-  让表头自带单位（`net_exposure[usd_per_1pct_move]`）；需要严格口径时直接用 JSON（默认）。
+  让每个带单位的列尾随一个 `unit_<列名>` 列（如 `unit_net_exposure`）——原列名保持不变，同一 reader 可解析加不加 `--units` 的两种输出；需要严格口径时直接用 JSON（默认）。
   其它 CSV 陷阱：`em` 的日期列是 `et_date`（不是裸 `iso`）；每行的 GEX 快照时刻看 `gex_as_of` / `exposure_as_of`。
 - 行权价相关的量纲：GEX/DEX 的 `net_exposure` / `call_exposure` 等是
   **每 1% 标的变动的美元 gamma/delta**（`unit: usd_per_1pct_move`），
   **不是**名义敞口、也不要加 `$` 前缀当美元. `stats` 的 `iv_pct` 是百分数，
   `skew` 同时给 `implied_volatility`（小数）与 `iv_pct`。
-- `stats` 的每一行是一张表的位置映射：`expiration` 从 `<a href>` 里解析，
-  付费列（`gex`/`dex`）在免费层是锁图标 → 值为 `null` 且列名进 `locked_columns`，
-  绝不编造。
+- `stats` / `chain` 的 `--columns` 是**本地投影**：CLI 一定把 identity 列（`stats` 的 `expiration`、`chain` 的 `strike`）放在请求首位并按表头文本回填，取列子集不会再整体错位/丢行（OC-02/03）；未知列名直接 exit 2。
+- 列名只有一套：`--columns` 里 `iv`→`iv_pct`、`expected_move`→`expected_move_abs`/`expected_move_pct`，CSV 表头也用规范名（与 `stats.rows[].iv_pct` 一致）；`oi`/`volume`/`skew` 每行额外给 `metric`+`value`。
+- `stats` 的每一行是一张表；付费列（`gex`/`dex`）在免费层是锁图标 → 值为 `null` 且列名进 `locked_columns`，绝不编造。列出的到期日若 `oi_total=0`，会告警 `expiry listed but no open interest yet`。
 - `gamma_zero_level`（Gamma Flip）**免费层恒为 `null`**（服务端未计算）；
   `vanna`/`charm`/`vomma` 同理不可用。历史序列类端点付费（`/async/*.csv` 直接 401）。
 
@@ -155,7 +156,7 @@ optioncharts oi  TLT --exp 2026-10-09:w --format csv
 | 场景 | 请求数 |
 | --- | --- |
 | `scan TICKER --dte 7 --weekly-only` | 1 / 标的 |
-| `scan TICKER --dte 7 --gex` | 1 + 到期日数 |
+| `scan TICKER --dte 7 --gex` | 2 + 到期日数（多 1 次 spot 取 ±1EM 基准） |
 | `stats TLT SPY QQQ` | 3 |
 | `gex TICKER --exp DATE:w` | 1（带后缀） |
 | `gex TICKER --exp DATE`（裸日期） | 2（多一次到期日解析） |

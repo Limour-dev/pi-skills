@@ -60,13 +60,19 @@ const COLUMN_UNITS: Record<string, string> = {
   avg_iv: "pct",
 };
 
+/**
+ * `--units` annotates without renaming (OC-05): the original header names stay
+ * addressable and each unit-bearing column gets a parallel `unit_<name>` column,
+ * so one reader can handle both `--format csv` and `--format csv --units`.
+ */
 function withUnits(csv: CsvBlock): CsvBlock {
+  const annotated = csv.headers
+    .map((header) => ({ header, unit: COLUMN_UNITS[header] }))
+    .filter((entry): entry is { header: string; unit: string } => entry.unit !== undefined);
+  if (!annotated.length) return csv;
   return {
-    headers: csv.headers.map((header) => {
-      const unit = COLUMN_UNITS[header];
-      return unit ? `${header}[${unit}]` : header;
-    }),
-    rows: csv.rows,
+    headers: [...csv.headers, ...annotated.map((entry) => `unit_${entry.header}`)],
+    rows: csv.rows.map((row) => [...row, ...annotated.map((entry) => entry.unit)]),
   };
 }
 
@@ -81,4 +87,50 @@ export function renderCsv(csv: CsvBlock): string {
   const lines = [csv.headers.map(csvField).join(",")];
   for (const row of csv.rows) lines.push(row.map(csvField).join(","));
   return lines.join("\n");
+}
+
+/**
+ * `--provenance=minimal` (OC-08): keep the comparable snapshot keys and the
+ * warnings, drop the constant long explanations that dominate the byte count.
+ * `--no-provenance` drops the `provenance` object entirely. `full` is a no-op.
+ */
+export type ProvenanceMode = "full" | "minimal" | "none";
+
+export function shapeDocument(doc: unknown, mode: ProvenanceMode): unknown {
+  if (mode === "full") return doc;
+  if (mode === "none") return dropProvenance(doc);
+  return stripLongNotes(doc);
+}
+
+/** Keep only the machine-comparable provenance keys. */
+function minimizeProvenance(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const source = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of ["fetched_at", "status", "from_cache", "requests_this_run", "warnings"]) {
+    if (key in source) out[key] = source[key];
+  }
+  return out;
+}
+
+function stripLongNotes(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripLongNotes);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "note" || key.endsWith("_note")) continue;
+    out[key] = key === "provenance" ? minimizeProvenance(inner) : stripLongNotes(inner);
+  }
+  return out;
+}
+
+function dropProvenance(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(dropProvenance);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "provenance") continue;
+    out[key] = dropProvenance(inner);
+  }
+  return out;
 }

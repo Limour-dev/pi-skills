@@ -290,9 +290,22 @@ test("gex adds cross-ticker normalisation fields and --units labels the CSV", ()
     "--from-file",
     fixture("tlt-gamma-exposure.html"),
   ]);
-  const header = csv.stdout.split("\n")[0];
-  assert.match(header, /net_exposure\[usd_per_1pct_move\]/);
-  assert.match(header, /share_of_abs_total_pct\[pct\]/);
+  const header = csv.stdout.split("\n")[0].split(",");
+  // OC-05: --units must not rename columns; the original names stay addressable.
+  for (const column of [
+    "ticker",
+    "expiry",
+    "strike",
+    "call_exposure",
+    "put_exposure",
+    "net_exposure",
+    "share_of_abs_total_pct",
+    "sigma_pos",
+  ]) {
+    assert.ok(header.includes(column), `missing ${column} in ${header.join(",")}`);
+  }
+  assert.ok(header.includes("unit_net_exposure"));
+  assert.ok(header.includes("unit_share_of_abs_total_pct"));
 });
 
 test("--normalize rejects an unknown mode", () => {
@@ -399,4 +412,122 @@ test("--json-errors prints errors on stdout", () => {
   assert.equal(result.status, 3);
   assert.equal(result.stderr, "");
   assert.equal((result.json.error as Record<string, unknown>).code, "unavailable");
+});
+
+test("--compact aliases --format compact and conflicts are rejected (OC-01)", () => {
+  const compact = run(["oi", "TLT", "--exp", "2026-10-09:w", "--compact", "--from-file", fixture("tlt-open-interest.html")]);
+  assert.equal(compact.status, 0);
+  assert.equal(compact.stdout.trim().split("\n").length, 1);
+  assert.equal(compact.json.command, "oi");
+
+  const conflict = run(["oi", "TLT", "--compact", "--format", "pretty", "--from-file", fixture("tlt-open-interest.html")]);
+  assert.equal(conflict.status, 2);
+});
+
+test("chain --columns without strike keeps values aligned (OC-02)", () => {
+  const control = run([
+    "chain", "TLT", "--exp", "2026-10-09:w", "--columns", "strike,volume,oi",
+    "--format", "csv", "--from-file", fixture("tlt-chain.html"),
+  ]);
+  const subset = run([
+    "chain", "TLT", "--exp", "2026-10-09:w", "--columns", "volume,oi",
+    "--format", "csv", "--from-file", fixture("tlt-chain.html"),
+  ]);
+  assert.equal(subset.status, 0);
+  const controlRows = control.stdout.trim().split("\n").map((line) => line.split(","));
+  const subsetRows = subset.stdout.trim().split("\n").map((line) => line.split(","));
+  assert.deepEqual(subsetRows[0], ["ticker", "expiration", "option_type", "volume", "oi"]);
+  assert.deepEqual(controlRows[0], ["ticker", "expiration", "option_type", "strike", "volume", "oi"]);
+  assert.deepEqual(
+    subsetRows.slice(1).map((row) => [row[3], row[4]]),
+    controlRows.slice(1).map((row) => [row[4], row[5]]),
+  );
+  // The old positional bug read the strike (65.00) into `volume`.
+  assert.notEqual(subsetRows[1][3], controlRows[1][3]);
+  assert.equal(subsetRows[1][3], "0");
+
+  const iv = run(["chain", "TLT", "--exp", "2026-10-09:w", "--columns", "iv", "--from-file", fixture("tlt-chain.html")]);
+  const ivRows = firstTicker(iv).rows as Array<Record<string, unknown>>;
+  assert.ok(Number(ivRows[0].iv_pct) < 200);
+  assert.equal(run(["chain", "TLT", "--columns", "nope", "--from-file", fixture("tlt-chain.html")]).status, 2);
+});
+
+test("stats --columns without expiration still returns rows (OC-03)", () => {
+  const result = run(["stats", "TLT", "--columns", "oi_total", "--format", "csv", "--from-file", fixture("tlt-stats.html")]);
+  assert.equal(result.status, 0);
+  const lines = result.stdout.trim().split("\n");
+  assert.equal(lines[0], "ticker,oi_total");
+  assert.equal(lines.length, 4);
+  assert.ok(lines[1].startsWith("TLT,"));
+
+  const canonical = run([
+    "stats", "TLT", "--columns", "expiration,oi_total",
+    "--format", "csv", "--from-file", fixture("tlt-stats.html"),
+  ]);
+  assert.equal(canonical.stdout.split("\n")[0], "ticker,expiration,oi_total");
+  assert.equal(run(["stats", "TLT", "--columns", "nope", "--from-file", fixture("tlt-stats.html")]).status, 2);
+});
+
+test("spot and info answer --format csv (OC-04)", () => {
+  const spot = run(["spot", "TLT", "--format", "csv", "--from-file", fixture("tlt-price.html")]);
+  assert.equal(spot.status, 0);
+  const spotLines = spot.stdout.trim().split("\n");
+  assert.ok(spotLines[0].startsWith("ticker,price,change,change_pct"));
+  assert.ok(spotLines[1].startsWith("TLT,77.1,"));
+
+  const info = run(["info", "TLT", "--format", "csv", "--from-file", fixture("tlt-ticker-info.html")]);
+  assert.equal(info.status, 0);
+  assert.ok(info.stdout.split("\n")[0].startsWith("ticker,dividend_yield_pct"));
+});
+
+test("series rows carry a metric/value pair and stats names are canonical (OC-06)", () => {
+  const oi = run(["oi", "TLT", "--exp", "2026-10-09:w", "--from-file", fixture("tlt-open-interest.html")]);
+  const row = (firstTicker(oi).rows as Array<Record<string, unknown>>)[0];
+  assert.equal(row.metric, "open_interest");
+  assert.equal(row.value, row.open_interest);
+
+  const stats = run(["stats", "TLT", "--format", "csv", "--from-file", fixture("tlt-stats.html")]);
+  const header = stats.stdout.split("\n")[0].split(",");
+  assert.ok(header.includes("iv_pct"));
+  assert.ok(header.includes("expected_move_abs"));
+  assert.ok(!header.includes("iv"));
+  assert.ok(!header.includes("expected_move"));
+});
+
+test("gex exposes the ±1EM summary fields and a note without --normalize sigma (OC-07)", () => {
+  const result = run(["gex", "TLT", "--exp", "2026-10-09:w", "--from-file", fixture("tlt-gamma-exposure.html")]);
+  const ticker = firstTicker(result);
+  assert.ok("net_exposure_within_1em" in ticker);
+  assert.equal(ticker.net_exposure_within_1em, null);
+  assert.equal(typeof ticker.within_em_note, "string");
+});
+
+test("--provenance=minimal trims long notes and --no-provenance drops it (OC-08)", () => {
+  const full = run(["spot", "TLT", "--from-file", fixture("tlt-price.html")]);
+  const minimal = run(["spot", "TLT", "--provenance", "minimal", "--from-file", fixture("tlt-price.html")]);
+  assert.equal(minimal.status, 0);
+  const provenance = firstTicker(minimal).provenance as Record<string, unknown>;
+  assert.equal(typeof provenance.fetched_at, "string");
+  assert.ok(Array.isArray(provenance.warnings));
+  assert.ok(!("url" in provenance));
+  assert.ok(!("note" in firstTicker(minimal)));
+  assert.ok(minimal.stdout.length < full.stdout.length);
+
+  const none = run(["spot", "TLT", "--no-provenance", "--from-file", fixture("tlt-price.html")]);
+  assert.ok(!("provenance" in firstTicker(none)));
+  assert.equal(run(["spot", "TLT", "--provenance", "bogus", "--from-file", fixture("tlt-price.html")]).status, 2);
+});
+
+test("spot carries as_of_iso and zero-OI expiries warn (OC-09)", () => {
+  const spot = run(["spot", "TLT", "--from-file", fixture("tlt-price.html")]);
+  const asOfIso = firstTicker(spot).as_of_iso;
+  assert.match(String(asOfIso), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+  const zero = run([
+    "stats", "TLT", "--columns", "expiration,oi_total",
+    "--from-file", fixture("tlt-stats-zero-oi.html"),
+  ]);
+  assert.equal(zero.status, 0);
+  const warnings = (firstTicker(zero).provenance as { warnings: string[] }).warnings;
+  assert.ok(warnings.some((warning) => /no open interest yet/.test(warning)));
 });
