@@ -145,8 +145,20 @@ export function isRetryable(err: unknown): boolean {
   return false;
 }
 
-/** Retry a transient operation a few times with a short backoff. */
-export async function withRetry<T>(fn: () => Promise<T>, attempts = 3, delayMs = 400): Promise<T> {
+/**
+ * Whether an error looks like server-side rate limiting. TradingView answers a
+ * burst of websocket handshakes with HTTP 429, surfaced here as a
+ * `CONNECTION_ERROR` whose message contains `429`. Those need a longer,
+ * jittered backoff than an ordinary transport hiccup: retrying immediately in
+ * lockstep just re-triggers the limit.
+ */
+export function isRateLimited(err: unknown): boolean {
+  const message = String((err as Coded | null)?.message ?? "");
+  return /\b429\b|too many requests|rate.?limit/i.test(message);
+}
+
+/** Retry a transient operation with exponential, jittered backoff. */
+export async function withRetry<T>(fn: () => Promise<T>, attempts = 4, delayMs = 400): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
@@ -154,7 +166,11 @@ export async function withRetry<T>(fn: () => Promise<T>, attempts = 3, delayMs =
     } catch (err) {
       lastError = err;
       if (attempt === attempts - 1 || !isRetryable(err)) throw err;
-      await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+      const base = isRateLimited(err) ? delayMs * 4 : delayMs;
+      const backoff = base * 2 ** attempt;
+      // Jitter spreads concurrent callers so they do not retry in lockstep.
+      const jitter = Math.random() * base;
+      await new Promise((resolve) => setTimeout(resolve, backoff + jitter));
     }
   }
   throw lastError;

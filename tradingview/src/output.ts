@@ -111,6 +111,9 @@ function tvHint(code: string): string | undefined {
       return "TradingView rejected the session cookies in TV_SESSION / TV_SIGNATURE.";
     case "TIMEOUT":
       return "Raise --timeout, or retry: the TradingView websocket did not answer in time.";
+    case "CONNECTION_ERROR":
+    case "DISCONNECTED":
+      return "TradingView dropped or rate-limited the connection (HTTP 429 under bursts). The CLI retries automatically; re-run if it persists.";
     case "NO_DATA":
       return "No bars in the requested range. Widen the range or lower --count.";
     default:

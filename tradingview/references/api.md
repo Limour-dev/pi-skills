@@ -84,6 +84,14 @@ default `[0, 50]`.
   widget; the universe/session/liquidity filters may differ.
 - **No auto-reconnect.** A watcher that hits a fatal error stops; `watch` prints
   `{"event":"error"}` and exits. Start a new watch if you need continuity.
+- **Rate limiting (HTTP 429).** Every command opens its own websocket, and a
+  burst of concurrent commands makes TradingView answer excess handshakes with
+  `429`. The CLI retries transient transport errors (including 429) with an
+  exponential, jittered backoff, so a handful of parallel calls now recover
+  instead of failing outright. It also reports those failures as
+  `NETWORK_ERROR`/`TIMEOUT` (exit 6/5), not `NOT_FOUND`, so a retryable
+  connection problem is not mistaken for a bad symbol. Very large bursts can
+  still exhaust the retries — serialise if you fan out hundreds of calls.
 
 ## Candle options exposed by the library
 

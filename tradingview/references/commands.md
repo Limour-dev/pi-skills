@@ -21,7 +21,7 @@ codes.
 | `--exchange X` | Prefix bare symbols with `X:` |
 | `--type stock\|crypto\|forex\|futures\|index\|bond\|…` | Restrict symbol search by type |
 | `--session regular\|extended` | Trading session for quotes/candles |
-| `--timeout MS` | Per-call timeout (default 15000; candles use ≥20000 internally) |
+| `--timeout MS` | Per-call timeout (default 15000; candles use ≥20000 internally). Transient errors, including TradingView's HTTP 429 rate limit, are retried with jittered backoff before this fails. |
 | `--strict` | No search fallback; only the resolved symbol |
 | `--no-fallback` | Alias/explicit only; never search |
 | `--raw` | Raw upstream objects (quote, info) |

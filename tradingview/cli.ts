@@ -179,12 +179,13 @@ async function cmdQuote(ctx: Ctx): Promise<CommandResult> {
   let batch: Record<string, QuoteData> | null = null;
   if (primaries.length > 1 && !ctx.strict) {
     try {
-      batch = await getQuotes({ symbols: primaries, session: ctx.session, timeoutMs: ctx.timeoutMs });
+      batch = await withRetry(() => getQuotes({ symbols: primaries, session: ctx.session, timeoutMs: ctx.timeoutMs }));
     } catch {
       batch = null; // one bad symbol rejects the batch; retry per symbol below
     }
   }
 
+  const failures: unknown[] = [];
   for (const res of resolutions) {
     if (!res.symbol) {
       rows.push({ input: res.input, error: "unresolved", hint: "run `tradingview search <text>` or pass EXCHANGE:SYMBOL" });
@@ -201,7 +202,7 @@ async function cmdQuote(ctx: Ctx): Promise<CommandResult> {
     let lastError: unknown = null;
     for (const candidate of order) {
       try {
-        quote = await getQuote({ symbol: candidate, session: ctx.session, timeoutMs: ctx.timeoutMs });
+        quote = await withRetry(() => getQuote({ symbol: candidate, session: ctx.session, timeoutMs: ctx.timeoutMs }));
         used = candidate;
         break;
       } catch (err) {
@@ -212,12 +213,17 @@ async function cmdQuote(ctx: Ctx): Promise<CommandResult> {
       const effective: Resolution = used === res.symbol ? res : { ...res, symbol: used, source: "search" };
       rows.push(raw ? rawQuoteRow(effective, quote) : quoteRow(effective, quote));
     } else {
+      failures.push(lastError);
       rows.push(errorRow(res, lastError));
     }
   }
 
   if (rows.length > 0 && rows.every((r) => "error" in r)) {
-    throw new CliError(`no quote for ${inputs.join(", ")}`, EXIT.notFound, rows);
+    // A rate-limited or dropped connection is retryable, not a bad symbol:
+    // surface the transport exit code (6/5) instead of NOT_FOUND when every
+    // failure was network-related.
+    const transport = failures.map(exitCodeFor).find((c) => c === EXIT.network || c === EXIT.timeout);
+    throw new CliError(`no quote for ${inputs.join(", ")}`, transport ?? EXIT.notFound, rows);
   }
 
   return finish(ctx, {
@@ -261,18 +267,20 @@ async function cmdCandles(ctx: Ctx): Promise<CommandResult> {
   for (const candidate of order) {
     if (!candidate) continue;
     try {
-      candles = await getCandles({
-        symbol: candidate,
-        timeframe: timeframe as never,
-        ...(from ? { from: parseTime(from, "--from") } : {}),
-        ...(to ? { to: parseTime(to, "--to") } : {}),
-        ...(from || to ? {} : { count }),
-        ...(chartType ? { chartType: chartType as never } : {}),
-        ...(currency ? { currency } : {}),
-        ...(adjustment ? { adjustment } : {}),
-        session: ctx.session,
-        timeoutMs: Math.max(ctx.timeoutMs, 20_000),
-      });
+      candles = await withRetry(() =>
+        getCandles({
+          symbol: candidate,
+          timeframe: timeframe as never,
+          ...(from ? { from: parseTime(from, "--from") } : {}),
+          ...(to ? { to: parseTime(to, "--to") } : {}),
+          ...(from || to ? {} : { count }),
+          ...(chartType ? { chartType: chartType as never } : {}),
+          ...(currency ? { currency } : {}),
+          ...(adjustment ? { adjustment } : {}),
+          session: ctx.session,
+          timeoutMs: Math.max(ctx.timeoutMs, 20_000),
+        }),
+      );
       used = candidate;
       break;
     } catch (err) {
@@ -354,56 +362,60 @@ async function cmdWatch(ctx: Ctx): Promise<CommandResult> {
     const timeframe = normalizeTimeframe(str(ctx.flags, "tf") ?? str(ctx.flags, "timeframe"), "1");
     const count = num(ctx.flags, "count", 50);
     for (const symbol of symbols) {
-      const watcher = await watchCandles(
-        { symbol, timeframe: timeframe as never, count, session: ctx.session, timeoutMs: ctx.timeoutMs },
-        {
-          onData: (snapshot: readonly Candle[]) => {
-            const last = snapshot.at(-1);
-            if (!last) return;
-            emit({
-              event: "candle",
-              input: symbolToInput.get(symbol) ?? symbol,
-              symbol,
-              timeframe,
-              time: last.time,
-              time_iso: toIso(last.time),
-              open: last.open,
-              high: last.high,
-              low: last.low,
-              close: last.close,
-              volume: last.volume,
-            });
+      const watcher = await withRetry(() =>
+        watchCandles(
+          { symbol, timeframe: timeframe as never, count, session: ctx.session, timeoutMs: ctx.timeoutMs },
+          {
+            onData: (snapshot: readonly Candle[]) => {
+              const last = snapshot.at(-1);
+              if (!last) return;
+              emit({
+                event: "candle",
+                input: symbolToInput.get(symbol) ?? symbol,
+                symbol,
+                timeframe,
+                time: last.time,
+                time_iso: toIso(last.time),
+                open: last.open,
+                high: last.high,
+                low: last.low,
+                close: last.close,
+                volume: last.volume,
+              });
+            },
+            onError: (err: unknown) => frame({ ts: nowIso(), event: "error", symbol, error: errMessage(err) }),
           },
-          onError: (err: unknown) => frame({ ts: nowIso(), event: "error", symbol, error: errMessage(err) }),
-        },
+        ),
       );
       stopHandlers.push(() => watcher.stop());
     }
   } else if (kind === "quote" || kind === "quotes") {
     const previous = new Map<string, string>();
-    const watcher = await watchQuotes(
-      { symbols, session: ctx.session, timeoutMs: ctx.timeoutMs, fields: "all" },
-      {
-        onData: (symbol: string, quote: QuoteData) => {
-          const signature = `${quote.lp}|${quote.chp}|${quote.bid}|${quote.ask}`;
-          if (changesOnly && previous.get(symbol) === signature) return;
-          previous.set(symbol, signature);
-          emit({
-            event: "quote",
-            input: symbolToInput.get(symbol) ?? symbol,
-            symbol,
-            last: quote.lp ?? null,
-            change: quote.ch ?? null,
-            change_pct: quote.chp ?? null,
-            bid: quote.bid ?? null,
-            ask: quote.ask ?? null,
-            volume: quote.volume ?? null,
-            time: quote.lp_time ?? null,
-            time_iso: toIso(typeof quote.lp_time === "number" ? quote.lp_time : null),
-          });
+    const watcher = await withRetry(() =>
+      watchQuotes(
+        { symbols, session: ctx.session, timeoutMs: ctx.timeoutMs, fields: "all" },
+        {
+          onData: (symbol: string, quote: QuoteData) => {
+            const signature = `${quote.lp}|${quote.chp}|${quote.bid}|${quote.ask}`;
+            if (changesOnly && previous.get(symbol) === signature) return;
+            previous.set(symbol, signature);
+            emit({
+              event: "quote",
+              input: symbolToInput.get(symbol) ?? symbol,
+              symbol,
+              last: quote.lp ?? null,
+              change: quote.ch ?? null,
+              change_pct: quote.chp ?? null,
+              bid: quote.bid ?? null,
+              ask: quote.ask ?? null,
+              volume: quote.volume ?? null,
+              time: quote.lp_time ?? null,
+              time_iso: toIso(typeof quote.lp_time === "number" ? quote.lp_time : null),
+            });
+          },
+          onError: (err: unknown) => frame({ ts: nowIso(), event: "error", symbols, error: errMessage(err) }),
         },
-        onError: (err: unknown) => frame({ ts: nowIso(), event: "error", symbols, error: errMessage(err) }),
-      },
+      ),
     );
     stopHandlers.push(() => watcher.stop());
   } else {
@@ -484,7 +496,7 @@ async function cmdInfo(ctx: Ctx): Promise<CommandResult> {
     noFallback: bool(ctx.flags, "no-fallback") || ctx.strict,
   });
   if (!res.symbol) throw new CliError(`unresolved symbol '${input}'`, EXIT.notFound, res.candidates);
-  const info = await getSymbolInfo({ symbol: res.symbol, session: ctx.session, timeoutMs: ctx.timeoutMs });
+  const info = await withRetry(() => getSymbolInfo({ symbol: res.symbol!, session: ctx.session, timeoutMs: ctx.timeoutMs }));
   if (bool(ctx.flags, "raw")) return { json: info };
   const row = infoRow(res, info);
   return finish(ctx, { json: row, rows: [row] });
@@ -565,14 +577,16 @@ async function cmdIndicator(ctx: Ctx): Promise<CommandResult> {
   });
   if (!res.symbol) throw new CliError(`unresolved symbol '${input}'`, EXIT.notFound, res.candidates);
 
-  const result = await getIndicatorData({
-    symbol: res.symbol,
-    timeframe: timeframe as never,
-    indicator,
-    ...(inputs ? { inputs } : {}),
-    ...(credentials() ? { credentials: credentials() } : {}),
-    timeoutMs: Math.max(ctx.timeoutMs, 20_000),
-  });
+  const result = await withRetry(() =>
+    getIndicatorData({
+      symbol: res.symbol!,
+      timeframe: timeframe as never,
+      indicator,
+      ...(inputs ? { inputs } : {}),
+      ...(credentials() ? { credentials: credentials() } : {}),
+      timeoutMs: Math.max(ctx.timeoutMs, 20_000),
+    }),
+  );
 
   const values: StudyValue[] = result.values;
   const plots = new Set<string>();
@@ -731,7 +745,7 @@ async function cmdResolve(ctx: Ctx): Promise<CommandResult> {
       const checks: Record<string, unknown>[] = [];
       for (const candidate of [r.symbol, ...r.alternatives]) {
         try {
-          const q = await getQuote({ symbol: candidate, timeoutMs: ctx.timeoutMs });
+          const q = await withRetry(() => getQuote({ symbol: candidate, timeoutMs: ctx.timeoutMs }));
           checks.push({ symbol: candidate, ok: true, last: q.lp ?? null, description: q.description ?? null });
         } catch (err) {
           checks.push({ symbol: candidate, ok: false, error: errMessage(err) });
