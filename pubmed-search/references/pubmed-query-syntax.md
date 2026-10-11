@@ -22,7 +22,7 @@ documentation: <https://pubmed.ncbi.nlm.nih.gov/help/#searching>.
 | `[Title/Abstract]` / `[tiab]` | `ferroptosis[tiab]` | title or abstract |
 | `[Author]` / `[au]` | `Smith J[au]` | author |
 | `[Journal]` / `[ta]` | `Nature[ta]` | journal title/abbrev |
-| `[MeSH Terms]` / `[mh]` | `cardiac arrest[mh]` | MeSH heading (exploded) |
+| `[MeSH Terms]` / `[mh]` / `[Mesh]` | `cardiac arrest[mh]` | MeSH heading (exploded); text names only — see §MeSH |
 | `[MeSH Major Topic]` / `[majr]` | `cardiac arrest[majr]` | MeSH heading as major topic |
 | `[Date - Publication]` / `[dp]` | `2020:2024[dp]` | publication date range |
 | `[Date - Create]` / `[crdt]` | `20230101:20231231[crdt]` | date added to PubMed |
@@ -41,8 +41,21 @@ documentation: <https://pubmed.ncbi.nlm.nih.gov/help/#searching>.
 
 - MeSH terms are auto-exploded (include narrower terms) when typed as plain
   words: `heart failure` includes "Heart Failure, Diastolic" etc.
-- Build search strategies with `lookupMesh()` first, then combine UI IDs:
-  `("D057174"[Mesh]) OR ("D006333"[Mesh])`.
+- `[Mesh]` is an alias of `[MeSH Terms]` / `[mh]`, and it only works with the
+  **text name** of a descriptor — never with a UI or numeric id:
+  ```text
+  "Heart Failure"[MeSH Terms]   # ✓ works
+  Heart Failure[mh]             # ✓ works (auto-explode)
+  "D006333"[Mesh]               # ✗ 0 hits: db=pubmed does not know descriptor UIs
+  D006333[mh]                   # ✗ 0 hits
+  ```
+- Build search strategies with the `mesh` subcommand first, then search by the
+  returned **name** (use `descriptor_ui` only for `db=mesh` cross-checks):
+  ```bash
+  pubmed-search mesh "heart failure"
+  # -> { "name": "Heart Failure", "descriptor_ui": "D057174", ... }
+  pubmed-search search '"Heart Failure"[MeSH Terms] AND 2020:2024[dp]'   # ✓
+  ```
 
 ## Filters / built-in queries
 
@@ -60,8 +73,14 @@ heart failure AND sacubitril AND randomized controlled trial[pt] AND english[la]
 
 ## Result shaping
 
-- `rows` is capped by `maxRows` (default 50).
+- `rows` is capped by `maxRows` (default 50); exceeding it logs a truncation
+  warning to stderr and the response carries `"truncated": true`.
+- `offset` (CLI `--offset`) maps to NCBI `retstart` for paging.
 - `sort="date"` maps to NCBI `pub_date` (Most Recent); `sort="relevance"`
   maps to Best Match.
 - `total` in the response is the full match count; `results` holds only the
   requested page — report `total` when summarizing to the user.
+- `query_translation` is what NCBI actually ran; `warnings` explains 0-hit /
+  malformed queries (`QuotedPhraseNotFound`, `FieldNotFound`, …).
+- Light modes issue only the esearch request: `--ids-only` (`pmids[]`),
+  `--count-only` (`total`), `--explain` (`query_translation` + `warnings`).

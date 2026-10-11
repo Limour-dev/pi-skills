@@ -2,10 +2,28 @@
 # pubmed-search CLI wrapper — run the pure-TS PubMed client from anywhere.
 #
 #   pubmed-search search "glioblastoma[Title]" --rows 5
-#   pubmed-search get-by-pmid 28344011
+#   pubmed-search get-by-pmid 28344011 --format citation
 #   pubmed-search mesh "Alzheimer Disease"
 #
 # Config: PUBMED_EMAIL / NCBI_API_KEY env vars, or --email / --api-key flags.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec node "$DIR/cli.ts" "$@"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pubmed-search: Node.js not found on PATH (need >= 22.6 for TypeScript execution)." >&2
+  exit 1
+fi
+
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+NODE_MINOR="$(node -p 'process.versions.node.split(".")[1]')"
+
+# Node >= 23.6 strips TypeScript types natively. Node 22.6–23.5 needs the flag.
+if [ "$NODE_MAJOR" -gt 23 ] || { [ "$NODE_MAJOR" -eq 23 ] && [ "$NODE_MINOR" -ge 6 ]; }; then
+  exec node "$DIR/cli.ts" "$@"
+elif [ "$NODE_MAJOR" -eq 23 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -ge 6 ]; }; then
+  exec node --experimental-strip-types "$DIR/cli.ts" "$@"
+else
+  echo "pubmed-search: Node $(node --version) is too old. This skill needs Node >= 22.6 (>= 23.6 recommended)." >&2
+  echo "Upgrade Node (nvm install 23.6), or run with an external runner: npx tsx \"$DIR/cli.ts\" ..." >&2
+  exit 1
+fi

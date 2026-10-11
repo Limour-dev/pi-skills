@@ -24,8 +24,9 @@ npx skills add Limour-dev/pi-skills --skill pubmed-search
 
 ## Requirements
 
-- Node ≥ 23.6 (runs TypeScript natively), or ≥ 22.6 with
-  `--experimental-strip-types`, or any Node via `npx tsx`.
+- Node ≥ 22.6. The `bin/pubmed-search` wrapper detects the version and adds
+  `--experimental-strip-types` automatically on 22.6–23.5; Node ≥ 23.6 needs
+  nothing. Older versions get an actionable error (or run via `npx tsx`).
 - **No runtime npm dependencies.** Only `typescript` as a devDependency for
   `npm run typecheck`.
 
@@ -37,13 +38,30 @@ npx skills add Limour-dev/pi-skills --skill pubmed-search
 # export NCBI_API_KEY=...                      # optional: 10 req/s instead of 3
 
 ./bin/pubmed-search search "glioblastoma[Title] AND MRI[Title]" --rows 5
+./bin/pubmed-search search "heart failure" --count-only        # 1 request, total only
 ./bin/pubmed-search get-by-pmid 28344011
+./bin/pubmed-search get-by-pmid 22828611,28344011 --format citation
 ./bin/pubmed-search mesh "Alzheimer Disease"
 ```
 
 Result JSON goes to stdout; errors to stderr; exit codes 0 / 1 / 2 (ok /
 runtime error / usage error). See `SKILL.md` for the full agent protocol,
 options, and workflow examples.
+
+## Notable behavior
+
+- **0 hits is a success** (`exit 0`, `total: 0`, `results: []`) — never an
+  E-utilities error. `warnings` / `query_translation` explain *why* a query
+  matched nothing.
+- **Cross-process rate limiting + retries**: a lock file in
+  `~/.cache/pubmed-search/` (override with `PUBMED_CACHE_DIR`) keeps parallel
+  CLI invocations under NCBI's limit, and 429/5xx/timeouts are retried with
+  exponential backoff (honouring `Retry-After`).
+- **Batch + cache**: `get-by-pmid 1,2,3` fetches in one request and caches
+  each article for a week (`--no-cache` to bypass).
+- **MeSH**: `mesh` returns the reconstructed `descriptor_ui` (e.g.
+  `D009203`), but PubMed searches must use the descriptor **name**.
+- **Reference-ready output**: `get-by-pmid <pmid> --format citation`.
 
 ## Layout
 

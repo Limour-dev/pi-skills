@@ -101,9 +101,9 @@ export class XmlElement {
    * `".//Anywhere"` (any depth), `"A//B"` (B under A at any depth).
    */
   findAll(path: string): XmlElement[] {
-    // Normalize: "./X" -> "X", ".//X" -> "//X"
+    // Normalize: "./X" -> "X", ".//X" -> "/X" (leading empty token = descendant)
     let p = path;
-    if (p.startsWith(".//")) p = p.slice(1);
+    if (p.startsWith(".//")) p = p.slice(2);
     else if (p.startsWith("./")) p = p.slice(2);
     const tokens = p.split("/");
 

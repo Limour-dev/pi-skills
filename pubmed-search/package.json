@@ -1,6 +1,6 @@
 {
   "name": "pubmed-search",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Zero-dependency, pure-TypeScript PubMed CLI via NCBI E-utilities (search, get-by-pmid, mesh). Ported from nature-skills' pubmed.py; invoked from bash, no MCP server.",
   "type": "module",
   "bin": {
